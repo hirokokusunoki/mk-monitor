@@ -1,0 +1,19 @@
+{
+  "name": "mk-monitor",
+  "version": "1.0.0",
+  "description": "Moreau Kusunoki — Veille concours & marchés publics",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node index.js --test"
+  },
+  "dependencies": {
+    "node-cron": "^3.0.3",
+    "resend": "^3.2.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
