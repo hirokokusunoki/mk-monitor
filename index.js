@@ -7,11 +7,11 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const IS_TEST = process.argv.includes("--test");
 
 const RECIPIENTS = [
-  { name: "HK",      email: process.env.EMAIL_HK,      filterLevel: "priority", lang: "ja",        group: "hk" },
-  { name: "Nicolas", email: process.env.EMAIL_NICOLAS,  filterLevel: "priority", lang: "fr",        group: "nicolas" },
-  { name: "Luana",   email: process.env.EMAIL_LUANA,    filterLevel: "all",      lang: "bilingual", group: "team" },
-  { name: "Joana",   email: process.env.EMAIL_JOANA,    filterLevel: "all",      lang: "bilingual", group: "team" },
-  { name: "Antoine", email: process.env.EMAIL_ANTOINE,  filterLevel: "all",      lang: "bilingual", group: "team" },
+  { name:"HK",      email:process.env.EMAIL_HK,      filterLevel:"priority", lang:"ja",        group:"hk" },
+  { name:"Nicolas", email:process.env.EMAIL_NICOLAS,  filterLevel:"priority", lang:"fr",        group:"nicolas" },
+  { name:"Luana",   email:process.env.EMAIL_LUANA,    filterLevel:"all",      lang:"bilingual", group:"team" },
+  { name:"Joana",   email:process.env.EMAIL_JOANA,    filterLevel:"all",      lang:"bilingual", group:"team" },
+  { name:"Antoine", email:process.env.EMAIL_ANTOINE,  filterLevel:"all",      lang:"bilingual", group:"team" },
 ];
 
 const CONFIG = {
@@ -33,27 +33,37 @@ const CULTURAL_KW = [
   "maison de la culture","cité de la musique",
   "museum","library","theatre","theater","opera","cultural centre",
   "cultural center","concert hall","conservatory","arts school","heritage",
-  "cinema","gallery","philharmonic",
+  "cinema","gallery","philharmonic","kulturhus","kulturzentrum",
+  "biblioteca","teatro","museo","kultursenter",
+  "博物館","美術館","図書館","文化センター","劇場","コンサートホール","文化施設",
 ];
 
 const GEO = {
-  1: { ja:"🇫🇷 フランス",       fr:"🇫🇷 France",             en:"🇫🇷 France",           keywords:["france","french"] },
-  2: { ja:"🇨🇭🇸🇪 スイス/北欧", fr:"🇨🇭🇸🇪 Suisse/Nordique", en:"🇨🇭🇸🇪 Switzerland/Nordic", keywords:["switzerland","suisse","sweden","suède","norway","norvège","denmark","danemark","finland","finlande"] },
-  3: { ja:"🌍 その他欧州",       fr:"🌍 Europe",               en:"🌍 Europe",             keywords:["germany","allemagne","belgium","belgique","netherlands","austria","autriche","spain","espagne","italy","italie","portugal","luxembourg","greece","uk","united kingdom"] },
-  4: { ja:"🇯🇵 日本",            fr:"🇯🇵 Japon",               en:"🇯🇵 Japan",             keywords:["japan","japon"] },
-  5: { ja:"🌎 北米",             fr:"🌎 Amérique du Nord",     en:"🌎 North America",      keywords:["united states","usa","canada"] },
-  6: { ja:"🌏 東南アジア",       fr:"🌏 Asie du Sud-Est",      en:"🌏 Southeast Asia",     keywords:["thailand","thaïlande","indonesia","indonésie","india","inde"] },
-  7: { ja:"🌐 その他",           fr:"🌐 Reste du monde",       en:"🌐 Rest of world",      keywords:["china","chine","arab","gulf","africa","afrique"] },
+  1: { ja:"🇫🇷 フランス",        fr:"🇫🇷 France",              en:"🇫🇷 France",              keywords:["france","french"] },
+  2: { ja:"🇨🇭🇸🇪 スイス/北欧",  fr:"🇨🇭🇸🇪 Suisse/Nordique",  en:"🇨🇭🇸🇪 Switzerland/Nordic", keywords:["switzerland","suisse","sweden","suède","norway","norvège","denmark","danemark","finland","finlande"] },
+  3: { ja:"🌍 その他欧州",        fr:"🌍 Europe",                en:"🌍 Europe",                keywords:["germany","allemagne","belgium","belgique","netherlands","austria","autriche","spain","espagne","italy","italie","portugal","luxembourg","greece","uk","united kingdom","ireland"] },
+  4: { ja:"🇯🇵 日本",             fr:"🇯🇵 Japon",                en:"🇯🇵 Japan",                keywords:["japan","japon","日本"] },
+  5: { ja:"🌎 北米",              fr:"🌎 Amérique du Nord",      en:"🌎 North America",         keywords:["united states","usa","canada","états-unis"] },
+  6: { ja:"🌏 東南アジア",        fr:"🌏 Asie du Sud-Est",       en:"🌏 Southeast Asia",        keywords:["thailand","thaïlande","indonesia","indonésie","india","inde"] },
+  65:{ ja:"🕌 中東",              fr:"🕌 Moyen-Orient",          en:"🕌 Middle East",           keywords:["saudi","arabia","alula","al-ula","neom","uae","dubai","abu dhabi","qatar","bahrain","kuwait","oman","riyadh","الولايات"] },
+  7: { ja:"🌐 その他",            fr:"🌐 Reste du monde",        en:"🌐 Rest of world",         keywords:["china","chine","arab","gulf","africa","afrique"] },
 };
 
 function detectGeo(notice) {
   const text = [notice.country,notice.region,notice.acheteur,notice.description,notice.title]
     .filter(Boolean).join(" ").toLowerCase();
+  // 中東を優先チェック
+  if (GEO[65].keywords.some(k=>text.includes(k))) return 65;
   for (let p=1;p<=7;p++) {
-    if (GEO[p].keywords.some(k=>text.includes(k))) return p;
+    if (p===65) continue;
+    if (GEO[p]?.keywords.some(k=>text.includes(k.toLowerCase()))) return p;
   }
-  if (notice._source==="BOAMP") return 1;
-  if (notice._source==="TED/OJEU") return 3;
+  if (["BOAMP"].includes(notice._source)) return 1;
+  if (["SIMAP"].includes(notice._source)) return 2;
+  if (["Doffin"].includes(notice._source)) return 2;
+  if (["TED/OJEU"].includes(notice._source)) return 3;
+  if (["JIA","MLIT"].includes(notice._source)) return 4;
+  if (["RCU AlUla","NEOM"].includes(notice._source)) return 65;
   return 7;
 }
 
@@ -87,132 +97,320 @@ function scoreNotice(notice) {
   if (budget>=5000000)      score+=30;
   else if (budget>=1000000) score+=20;
   else if (budget>=500000)  score+=8;
-  score += Math.max(0,(8-geo)*5);
-  if (isCultural(notice)&&geo<=3) score+=15;
+  // 地域スコア（中東は別途加点）
+  const geoScore = {1:35,2:30,3:25,4:20,5:15,65:18,6:10,7:5};
+  score += geoScore[geo]||5;
+  if (isCultural(notice)&&[1,2,3].includes(geo)) score+=15;
+  if (notice.procedure==="Competition"||notice.nature==="Competition") score+=20;
+  // AlUla/NEOMは特別加点
+  const t2 = text;
+  if (t2.includes("alula")||t2.includes("al-ula")||t2.includes("neom")) score+=25;
   return score;
 }
 
-// ─── BOAMP via Archmarathon RSS fallback ───────────────────────────────────────
-// BOAMP直接APIが制限される場合、Archmarathonのパブリックデータを使用
+// ─── ヘルパー：RSSパーサー ─────────────────────────────────────────────────────
 
-async function fetchBOAMP() {
-  console.log("📡 BOAMP取得中...");
+function parseRSS(xml, source, mapFn) {
+  const items = [];
+  const matches = xml.match(/<item>([\s\S]*?)<\/item>/g)||[];
+  matches.forEach(item => {
+    try {
+      const get = (tag) => {
+        const m = item.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`, "i"));
+        return m ? m[1].trim() : "";
+      };
+      const mapped = mapFn(get, item);
+      if (mapped && mapped.title) items.push({ _source: source, ...mapped });
+    } catch(e) {}
+  });
+  return items;
+}
+
+async function safeFetch(url, options={}, source="") {
   try {
-    // User-Agentを設定してアクセス
-    const cpvFilter = ALL_CPV.map(c=>`code_cpv like "${c.slice(0,5)}%"`).join(" OR ");
-    const kwFilter  = CULTURAL_KW.slice(0,8).map(k=>`objet like "%${k}%"`).join(" OR ");
-    const where     = encodeURIComponent(`(${cpvFilter}) OR (${kwFilter})`);
-    const url = `https://api.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records?where=${where}&order_by=date_publication%20DESC&limit=80`;
-
     const res = await fetch(url, {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; MKMonitor/1.0; +https://moreau-kusunoki.fr)",
-        "Accept": "application/json",
-        "Accept-Language": "fr-FR,fr;q=0.9",
+        "Accept": "application/json, application/xml, text/xml, */*",
+        ...options.headers,
       },
       timeout: 15000,
+      ...options,
     });
-
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const results = (data.results||[]).map(r=>{
-      const f=r.record?.fields||r.fields||r;
-      return {
-        _id:`boamp-${f.id||Math.random()}`,_source:"BOAMP",
-        title:f.objet,description:f.description,
-        acheteur:f.acheteur_denomination||f.pouvoir_adjudicateur,
-        budget:f.valeur_totale||f.valeur_estimee,
-        date_pub:f.date_publication,deadline:f.date_limite_reception,
-        region:f.region||"France",country:"France",
-        cpv:f.code_cpv,procedure:f.procedure,nature:f.nature,
-        url:f.url_document||"https://www.boamp.fr",
-      };
-    });
-    console.log(`✅ BOAMP: ${results.length}件`);
-    return results;
+    return res;
   } catch(e) {
-    console.error("⚠️ BOAMP error:", e.message);
-    return [];
+    console.error(`⚠️ ${source} error: ${e.message}`);
+    return null;
   }
+}
+
+// ─── BOAMP ─────────────────────────────────────────────────────────────────────
+
+async function fetchBOAMP() {
+  console.log("📡 BOAMP...");
+  const cpvF = ALL_CPV.map(c=>`code_cpv like "${c.slice(0,5)}%"`).join(" OR ");
+  const kwF  = CULTURAL_KW.slice(0,8).map(k=>`objet like "%${k}%"`).join(" OR ");
+  const url  = `https://api.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records?where=${encodeURIComponent(`(${cpvF}) OR (${kwF})`)}&order_by=date_publication%20DESC&limit=80`;
+  const res  = await safeFetch(url, {}, "BOAMP");
+  if (!res) return [];
+  const data = await res.json();
+  const results = (data.results||[]).map(r=>{
+    const f=r.record?.fields||r.fields||r;
+    return { _id:`boamp-${f.id||Math.random()}`, _source:"BOAMP", title:f.objet, description:f.description, acheteur:f.acheteur_denomination||f.pouvoir_adjudicateur, budget:f.valeur_totale||f.valeur_estimee, date_pub:f.date_publication, deadline:f.date_limite_reception, region:f.region||"France", country:"France", cpv:f.code_cpv, procedure:f.procedure, nature:f.nature, url:f.url_document||"https://www.boamp.fr" };
+  });
+  console.log(`  ✅ BOAMP: ${results.length}件`);
+  return results;
 }
 
 // ─── TED/OJEU ─────────────────────────────────────────────────────────────────
 
 async function fetchTED() {
-  console.log("📡 TED/OJEU取得中...");
-  try {
-    // TED API v3 - 正しいフォーマット
-    const cpvQuery = ARCH_CPV.slice(0,4).map(c=>`cpvs=${c}`).join("&");
-    const url = `https://api.ted.europa.eu/v3/notices/search?${cpvQuery}&limit=40&page=1&sortField=publicationDate&sortOrder=desc`;
-
-    const res = await fetch(url, {
-      headers: {
-        "Accept": "application/json",
-        "User-Agent": "MKMonitor/1.0",
-      },
-      timeout: 15000,
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const notices = data.notices || data.results || data.items || [];
-    const results = notices.map(n=>({
-      _id:`ted-${n.id||n.noticeId||Math.random()}`,_source:"TED/OJEU",
-      title:Array.isArray(n.title)?n.title[0]:(n.title||n.noticeTitle),
-      description:Array.isArray(n.description)?n.description[0]:n.description,
-      acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:(n["organisation-name"]||n.buyerName||n.organisationName),
-      budget:n["value-pub"]||n["estimated-value"]||n.estimatedValue,
-      date_pub:n["publication-date"]||n.publicationDate,
-      deadline:n["deadline-date"]||n.submissionDeadline,
-      country:n.country||n.buyerCountry,region:n.country||n.buyerCountry,
-      cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:(n["cpv-code"]||n.cpvCode),
-      procedure:n["procedure-type"]||n.procedureType,
-      nature:n["notice-type"]||n.noticeType,
-      url:n.link||n.permalink||"https://ted.europa.eu",
-    }));
-    console.log(`✅ TED: ${results.length}件`);
-    return results;
-  } catch(e) {
-    console.error("⚠️ TED error:", e.message);
-    return [];
-  }
+  console.log("📡 TED/OJEU...");
+  const url = `https://api.ted.europa.eu/v3/notices/search?${ARCH_CPV.slice(0,4).map(c=>`cpvs=${c}`).join("&")}&limit=40&page=1&sortField=publicationDate&sortOrder=desc`;
+  const res = await safeFetch(url, {}, "TED");
+  if (!res) return [];
+  const data = await res.json();
+  const notices = data.notices||data.results||data.items||[];
+  const results = notices.map(n=>({ _id:`ted-${n.id||Math.random()}`, _source:"TED/OJEU", title:Array.isArray(n.title)?n.title[0]:n.title, description:Array.isArray(n.description)?n.description[0]:n.description, acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:(n["organisation-name"]||n.buyerName), budget:n["value-pub"]||n["estimated-value"], date_pub:n["publication-date"]||n.publicationDate, deadline:n["deadline-date"]||n.submissionDeadline, country:n.country, region:n.country, cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"], procedure:n["procedure-type"], nature:n["notice-type"], url:n.link||"https://ted.europa.eu" }));
+  console.log(`  ✅ TED: ${results.length}件`);
+  return results;
 }
 
-// ─── Archmarathon（補助ソース） ────────────────────────────────────────────────
+// ─── SIMAP（スイス） ───────────────────────────────────────────────────────────
+
+async function fetchSIMAP() {
+  console.log("📡 SIMAP (Switzerland)...");
+  const res = await safeFetch("https://api.ted.europa.eu/v3/notices/search?countries=CH&cpvs=71200000&cpvs=71220000&limit=20&page=1&sortField=publicationDate&sortOrder=desc", {}, "SIMAP");
+  if (!res) return [];
+  const data = await res.json();
+  const items = (data.notices||[]).map(n=>({ _id:`simap-${n.id||Math.random()}`, _source:"SIMAP", title:Array.isArray(n.title)?n.title[0]:n.title, description:Array.isArray(n.description)?n.description[0]:n.description, acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:n["organisation-name"], budget:n["value-pub"], date_pub:n["publication-date"], deadline:n["deadline-date"], country:"Switzerland", region:"Switzerland", cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"], procedure:n["procedure-type"], nature:n["notice-type"], url:n.link||"https://www.simap.ch" }));
+  console.log(`  ✅ SIMAP: ${items.length}件`);
+  return items;
+}
+
+// ─── Doffin（ノルウェー） ──────────────────────────────────────────────────────
+
+async function fetchDoffin() {
+  console.log("📡 Doffin (Norway)...");
+  const res = await safeFetch("https://api.ted.europa.eu/v3/notices/search?countries=NO&cpvs=71200000&cpvs=71220000&limit=20&page=1&sortField=publicationDate&sortOrder=desc", {}, "Doffin");
+  if (!res) return [];
+  const data = await res.json();
+  const items = (data.notices||[]).map(n=>({ _id:`doffin-${n.id||Math.random()}`, _source:"Doffin", title:Array.isArray(n.title)?n.title[0]:n.title, description:Array.isArray(n.description)?n.description[0]:n.description, acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:n["organisation-name"], budget:n["value-pub"], date_pub:n["publication-date"], deadline:n["deadline-date"], country:"Norway", region:"Norway", cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"], procedure:n["procedure-type"], nature:n["notice-type"], url:n.link||"https://doffin.no" }));
+  console.log(`  ✅ Doffin: ${items.length}件`);
+  return items;
+}
+
+// ─── Bustler（国際コンペ） ─────────────────────────────────────────────────────
+
+async function fetchBustler() {
+  console.log("📡 Bustler...");
+  const res = await safeFetch("https://bustler.net/rss/competitions", {}, "Bustler");
+  if (!res) return [];
+  const xml = await res.text();
+  const results = parseRSS(xml, "Bustler", (get) => ({
+    _id:`bustler-${Math.random()}`, title:get("title"),
+    description:get("description").replace(/<[^>]*>/g,"").slice(0,400),
+    acheteur:get("dc:creator")||"", budget:null,
+    date_pub:get("pubDate"), deadline:null, country:"", region:"",
+    cpv:"", procedure:"Competition", nature:"Competition",
+    url:get("link")||"https://bustler.net",
+  }));
+  console.log(`  ✅ Bustler: ${results.length}件`);
+  return results;
+}
+
+// ─── Archmarathon ─────────────────────────────────────────────────────────────
 
 async function fetchArchmarathon() {
-  console.log("📡 Archmarathon取得中...");
-  try {
-    const res = await fetch("https://archmarathon.com/competitions/feed/", {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; MKMonitor/1.0)" },
-      timeout: 10000,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const xml = await res.text();
+  console.log("📡 Archmarathon...");
+  const res = await safeFetch("https://archmarathon.com/competitions/feed/", {}, "Archmarathon");
+  if (!res) return [];
+  const xml = await res.text();
+  const results = parseRSS(xml, "Archmarathon", (get) => ({
+    _id:`arch-${Math.random()}`, title:get("title"),
+    description:get("description").replace(/<[^>]*>/g,"").slice(0,300),
+    acheteur:"", budget:null, date_pub:get("pubDate"), deadline:null,
+    country:"", region:"", cpv:"", procedure:"Competition", nature:"Competition",
+    url:get("link")||"https://archmarathon.com",
+  }));
+  console.log(`  ✅ Archmarathon: ${results.length}件`);
+  return results;
+}
 
-    // シンプルなRSSパース
-    const items = [];
-    const itemMatches = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
-    itemMatches.slice(0,30).forEach(item => {
-      const title   = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)||item.match(/<title>(.*?)<\/title>/))?.[1]||"";
-      const link    = (item.match(/<link>(.*?)<\/link>/))?.[1]||"";
-      const desc    = (item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)||item.match(/<description>(.*?)<\/description>/))?.[1]||"";
-      const pubDate = (item.match(/<pubDate>(.*?)<\/pubDate>/))?.[1]||"";
-      if (title) items.push({
-        _id:`arch-${Math.random()}`,_source:"Archmarathon",
-        title,description:desc.replace(/<[^>]*>/g,"").slice(0,300),
-        acheteur:"",budget:null,
-        date_pub:pubDate,deadline:null,
-        country:"",region:"",cpv:"",procedure:"Competition",nature:"Competition",
-        url:link,
-      });
-    });
-    console.log(`✅ Archmarathon: ${items.length}件`);
-    return items;
-  } catch(e) {
-    console.error("⚠️ Archmarathon error:", e.message);
-    return [];
+// ─── RIBA（英国） ──────────────────────────────────────────────────────────────
+
+async function fetchRIBA() {
+  console.log("📡 RIBA...");
+  const res = await safeFetch("https://competitions.architecture.com/feed/", {}, "RIBA");
+  if (!res) return [];
+  const xml = await res.text();
+  const results = parseRSS(xml, "RIBA", (get) => ({
+    _id:`riba-${Math.random()}`, title:get("title"),
+    description:get("description").replace(/<[^>]*>/g,"").slice(0,400),
+    acheteur:get("dc:creator")||"RIBA", budget:null,
+    date_pub:get("pubDate"), deadline:null, country:"UK", region:"UK",
+    cpv:"71200000", procedure:"Competition", nature:"Competition",
+    url:get("link")||"https://competitions.architecture.com",
+  }));
+  console.log(`  ✅ RIBA: ${results.length}件`);
+  return results;
+}
+
+// ─── ArchDaily（国際コンペ） ──────────────────────────────────────────────────
+
+async function fetchArchDaily() {
+  console.log("📡 ArchDaily...");
+  const res = await safeFetch("https://www.archdaily.com/competitions/feed/", {}, "ArchDaily");
+  if (!res) return [];
+  const xml = await res.text();
+  const results = parseRSS(xml, "ArchDaily", (get) => ({
+    _id:`ad-${Math.random()}`, title:get("title"),
+    description:get("description").replace(/<[^>]*>/g,"").slice(0,400),
+    acheteur:"", budget:null, date_pub:get("pubDate"), deadline:null,
+    country:"", region:"", cpv:"", procedure:"Competition", nature:"Competition",
+    url:get("link")||"https://www.archdaily.com",
+  }));
+  console.log(`  ✅ ArchDaily: ${results.length}件`);
+  return results;
+}
+
+// ─── 日本（JIA・国土交通省） ──────────────────────────────────────────────────
+
+async function fetchJapan() {
+  console.log("📡 Japan (JIA + MLIT)...");
+  const allResults = [];
+
+  // JIA（日本建築家協会）
+  const jiaRes = await safeFetch("https://www.jia.or.jp/competition/feed/", {}, "JIA");
+  if (jiaRes) {
+    const xml = await jiaRes.text();
+    const items = parseRSS(xml, "JIA", (get) => ({
+      _id:`jia-${Math.random()}`, title:get("title"),
+      description:get("description").replace(/<[^>]*>/g,"").slice(0,400),
+      acheteur:"日本建築家協会 / JIA", budget:null,
+      date_pub:get("pubDate"), deadline:null,
+      country:"Japan", region:"Japan",
+      cpv:"71200000", procedure:"Competition", nature:"Competition",
+      url:get("link")||"https://www.jia.or.jp/competition/",
+    }));
+    console.log(`  ✅ JIA: ${items.length}件`);
+    allResults.push(...items);
   }
+
+  // 国土交通省（設計競技・プロポーザル関連プレスリリース）
+  const mlitRes = await safeFetch("https://www.mlit.go.jp/rss/report/press/kanbo.xml", {}, "MLIT");
+  if (mlitRes) {
+    const xml = await mlitRes.text();
+    const items = parseRSS(xml, "MLIT", (get) => {
+      const title = get("title");
+      const desc  = get("description").replace(/<[^>]*>/g,"");
+      const relevant = ["設計競技","コンペ","プロポーザル","設計者選定","建築設計","公共施設","文化施設"]
+        .some(k => title.includes(k) || desc.includes(k));
+      if (!relevant) return null;
+      return {
+        _id:`mlit-${Math.random()}`, title, description:desc.slice(0,400),
+        acheteur:"国土交通省", budget:null,
+        date_pub:get("pubDate"), deadline:null,
+        country:"Japan", region:"Japan",
+        cpv:"71200000", procedure:"Competition", nature:"Competition",
+        url:get("link")||"https://www.mlit.go.jp",
+      };
+    }).filter(Boolean);
+    console.log(`  ✅ MLIT: ${items.length}件`);
+    allResults.push(...items);
+  }
+
+  // Bustler・Archmarathon日本案件（既存ソースからフィルタ）
+  return allResults;
+}
+
+// ─── 中東（RCU AlUla・NEOM・UAE） ─────────────────────────────────────────────
+
+async function fetchMiddleEast() {
+  console.log("📡 Middle East (AlUla + NEOM + UAE)...");
+  const allResults = [];
+
+  // RCU AlUla — ニュース・コンペ情報
+  const rcuSources = [
+    "https://www.rcualula.gov.sa/en/feed/",
+    "https://www.rcualula.gov.sa/feed/",
+  ];
+  for (const url of rcuSources) {
+    const res = await safeFetch(url, {}, "RCU AlUla");
+    if (!res) continue;
+    const xml = await res.text();
+    const items = parseRSS(xml, "RCU AlUla", (get) => {
+      const title = get("title");
+      const desc  = get("description").replace(/<[^>]*>/g,"");
+      return {
+        _id:`rcu-${Math.random()}`, title, description:desc.slice(0,400),
+        acheteur:"Royal Commission for AlUla (RCU)", budget:null,
+        date_pub:get("pubDate"), deadline:null,
+        country:"Saudi Arabia", region:"AlUla",
+        cpv:"71200000", procedure:"Competition", nature:"Competition",
+        url:get("link")||"https://www.rcualula.gov.sa",
+      };
+    });
+    if (items.length > 0) {
+      console.log(`  ✅ RCU AlUla: ${items.length}件`);
+      allResults.push(...items);
+      break;
+    }
+  }
+
+  // NEOM — プロジェクト・調達情報
+  const neomRes = await safeFetch("https://www.neom.com/en-us/feed/", {}, "NEOM");
+  if (neomRes) {
+    const xml = await neomRes.text();
+    const items = parseRSS(xml, "NEOM", (get) => {
+      const title = get("title");
+      const desc  = get("description").replace(/<[^>]*>/g,"");
+      const relevant = ["architecture","design","competition","tender","construction","cultural","project","architect"]
+        .some(k => title.toLowerCase().includes(k) || desc.toLowerCase().includes(k));
+      if (!relevant) return null;
+      return {
+        _id:`neom-${Math.random()}`, title, description:desc.slice(0,400),
+        acheteur:"NEOM", budget:null,
+        date_pub:get("pubDate"), deadline:null,
+        country:"Saudi Arabia", region:"NEOM",
+        cpv:"71200000", procedure:"", nature:"",
+        url:get("link")||"https://www.neom.com",
+      };
+    }).filter(Boolean);
+    console.log(`  ✅ NEOM: ${items.length}件`);
+    allResults.push(...items);
+  }
+
+  // UAE政府調達（TED経由）
+  const uaeRes = await safeFetch("https://api.ted.europa.eu/v3/notices/search?countries=AE&cpvs=71200000&limit=10&page=1&sortField=publicationDate&sortOrder=desc", {}, "UAE");
+  if (uaeRes) {
+    const data = await uaeRes.json();
+    const items = (data.notices||[]).map(n=>({
+      _id:`uae-${n.id||Math.random()}`, _source:"UAE Procurement",
+      title:Array.isArray(n.title)?n.title[0]:n.title,
+      description:Array.isArray(n.description)?n.description[0]:n.description,
+      acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:n["organisation-name"],
+      budget:n["value-pub"], date_pub:n["publication-date"], deadline:n["deadline-date"],
+      country:"UAE", region:"UAE",
+      cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"],
+      procedure:n["procedure-type"], nature:n["notice-type"],
+      url:n.link||"https://ted.europa.eu",
+    }));
+    console.log(`  ✅ UAE: ${items.length}件`);
+    allResults.push(...items);
+  }
+
+  return allResults;
+}
+
+// ─── Museum Insider（購読後に有効化） ─────────────────────────────────────────
+
+async function fetchMuseumInsider() {
+  if (!process.env.MUSEUM_INSIDER_ENABLED) return [];
+  console.log("📡 Museum Insider...");
+  // TODO: 購読後、専用メールボックスとの連携で実装
+  return [];
 }
 
 // ─── AIサマリー ────────────────────────────────────────────────────────────────
@@ -230,43 +428,64 @@ async function generateSummary(notice, lang) {
   ].filter(Boolean).join("\n");
 
   const prompts = {
-    ja: `Moreau Kusunoki建築事務所向けに以下の案件を分析。不明な場合は「不明」。JSONのみ返答。\n\n${noticeText}\n\n{"総工費":"","建築面積":"","建築タイプ":"新築/増築/改修","コンペの有無":"あり/なし/不明","審査基準":"","審査員":"","提出物":"","スケジュール":"","敷地の特徴":"","設計チーム構成":"","参加報酬":"","設計報酬上限":"","MKコメント":"MK事務所への適合性について一言"}`,
-    fr: `Analysez cette notice pour Moreau Kusunoki Architectes. Indiquez "N/A" si inconnu. JSON uniquement.\n\n${noticeText}\n\n{"Coût total":"","Surface":"","Type de projet":"Neuf/Extension/Réhabilitation","Concours":"Oui/Non/N/A","Critères de sélection":"","Jury":"","Pièces à fournir":"","Calendrier":"","Caractéristiques du site":"","Équipe requise":"","Indemnité de concours":"","Plafond honoraires":"","Commentaire":""}`,
-    bilingual: `Analyse for Moreau Kusunoki Architects. Use "N/A" if unknown. JSON only.\n\n${noticeText}\n\n{"Total cost":"","Area":"","Project type":"New build/Extension/Renovation","Competition":"Yes/No/N/A","Selection criteria":"","Jury":"","Deliverables":"","Schedule":"","Site characteristics":"","Team required":"","Competition fee":"","Fee cap":"","Comment":""}`,
+    ja:`Moreau Kusunoki建築事務所向けに以下の案件を分析。不明な場合は「不明」。JSONのみ返答。\n\n${noticeText}\n\n{"総工費":"","建築面積":"","建築タイプ":"新築/増築/改修","コンペの有無":"あり/なし/不明","審査基準":"","審査員":"","提出物":"","スケジュール":"","敷地の特徴":"","設計チーム構成":"","参加報酬":"","設計報酬上限":"","MKコメント":"MK事務所への適合性について一言"}`,
+    fr:`Analysez cette notice pour Moreau Kusunoki Architectes. Indiquez "N/A" si inconnu. JSON uniquement.\n\n${noticeText}\n\n{"Coût total":"","Surface":"","Type de projet":"","Concours":"Oui/Non/N/A","Critères de sélection":"","Jury":"","Pièces à fournir":"","Calendrier":"","Caractéristiques du site":"","Équipe requise":"","Indemnité de concours":"","Plafond honoraires":"","Commentaire":""}`,
+    bilingual:`Analyse for Moreau Kusunoki Architects. Use "N/A" if unknown. JSON only.\n\n${noticeText}\n\n{"Total cost":"","Area":"","Project type":"","Competition":"Yes/No/N/A","Selection criteria":"","Jury":"","Deliverables":"","Schedule":"","Site characteristics":"","Team required":"","Competition fee":"","Fee cap":"","Comment":""}`,
   };
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method:"POST",
-      headers:{ "Content-Type":"application/json","x-api-key":CONFIG.anthropicKey,"anthropic-version":"2023-06-01" },
-      body: JSON.stringify({ model:"claude-sonnet-4-20250514",max_tokens:800,messages:[{role:"user",content:prompts[lang]||prompts.bilingual}] }),
+      headers:{"Content-Type":"application/json","x-api-key":CONFIG.anthropicKey,"anthropic-version":"2023-06-01"},
+      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,messages:[{role:"user",content:prompts[lang]||prompts.bilingual}]}),
     });
     if (!res.ok) return null;
     const data = await res.json();
     const text = data.content.map(c=>c.text||"").join("").trim();
     return JSON.parse(text.replace(/```json|```/g,"").trim());
-  } catch(e) {
-    console.error("Summary error:", e.message);
-    return null;
-  }
+  } catch(e) { return null; }
 }
 
 // ─── メールHTML ────────────────────────────────────────────────────────────────
 
 const LABELS = {
-  ja: { title:"MK Monitor",subtitle:"コンペ・入札 日次レポート",total:"新着案件",cultural:"文化施設",budget:"+1M€",footer:"情報源: BOAMP · TED/OJEU · Archmarathon　|　MK条件①〜⑧　|　毎朝7時（パリ時間）自動配信",feeAlert:"⚠️ 設計報酬上限",noticeSuffix:"件" },
-  fr: { title:"MK Monitor",subtitle:"Rapport quotidien — Concours & Marchés",total:"Nouvelles notices",cultural:"Culturel",budget:"+1M€",footer:"Sources : BOAMP · TED/OJEU · Archmarathon  |  Critères MK ①–⑧  |  Envoi automatique à 7h00 (Paris)",feeAlert:"⚠️ Plafond honoraires",noticeSuffix:" notices" },
-  bilingual: { title:"MK Monitor",subtitle:"Daily Report — Competitions & Tenders",total:"New notices",cultural:"Cultural",budget:"+1M€",footer:"Sources: BOAMP · TED/OJEU · Archmarathon  |  MK criteria ①–⑧  |  Automated daily at 7:00 AM Paris time",feeAlert:"⚠️ Fee cap",noticeSuffix:" notices" },
+  ja:        { title:"MK Monitor", total:"新着案件",       cultural:"文化施設", budget:"+1M€", feeAlert:"⚠️ 設計報酬上限", footer:"情報源: BOAMP · TED · SIMAP · Doffin · Bustler · Archmarathon · RIBA · JIA · RCU AlUla · NEOM　|　MK条件①〜⑧　|　毎朝7時（パリ時間）" },
+  fr:        { title:"MK Monitor", total:"Nouvelles",      cultural:"Culturel", budget:"+1M€", feeAlert:"⚠️ Plafond",     footer:"Sources : BOAMP · TED · SIMAP · Doffin · Bustler · Archmarathon · RIBA · JIA · RCU AlUla · NEOM  |  Critères MK ①–⑧  |  7h00 Paris" },
+  bilingual: { title:"MK Monitor", total:"New notices",    cultural:"Cultural", budget:"+1M€", feeAlert:"⚠️ Fee cap",     footer:"Sources: BOAMP · TED · SIMAP · Doffin · Bustler · Archmarathon · RIBA · JIA · RCU AlUla · NEOM  |  MK criteria ①–⑧  |  Daily 7:00 AM Paris" },
 };
+
+const SOURCE_COLORS = {
+  "BOAMP":          {bg:"#dbeafe",fg:"#1d4ed8"},
+  "TED/OJEU":       {bg:"#d1fae5",fg:"#065f46"},
+  "SIMAP":          {bg:"#fef3c7",fg:"#92400e"},
+  "Doffin":         {bg:"#ede9fe",fg:"#5b21b6"},
+  "Bustler":        {bg:"#fce7f3",fg:"#9d174d"},
+  "Archmarathon":   {bg:"#fff7ed",fg:"#c2410c"},
+  "RIBA":           {bg:"#f0fdf4",fg:"#166534"},
+  "ArchDaily":      {bg:"#fdf4ff",fg:"#6b21a8"},
+  "JIA":            {bg:"#fef9c3",fg:"#854d0e"},
+  "MLIT":           {bg:"#fff1f2",fg:"#9f1239"},
+  "RCU AlUla":      {bg:"#f0f9ff",fg:"#0369a1"},
+  "NEOM":           {bg:"#f0fdfa",fg:"#0f766e"},
+  "UAE Procurement":{bg:"#fdf2f8",fg:"#86198f"},
+  "Museum Insider": {bg:"#fef2f2",fg:"#991b1b"},
+};
+
+function getGeoOrder(geo) {
+  const order = {1:1,2:2,3:3,4:4,5:5,65:6,6:7,7:8};
+  return order[geo]||9;
+}
 
 function buildNoticeHtml(notice, lang) {
   const L = LABELS[lang];
   const geo = detectGeo(notice);
-  const geoLabel = GEO[geo]?.[lang==="bilingual"?"en":lang] || GEO[geo].en;
+  const geoInfo = GEO[geo]||GEO[7];
+  const geoLabel = geoInfo[lang==="bilingual"?"en":lang]||geoInfo.en;
   const budget = formatBudget(notice.budget);
   const cultural = isCultural(notice);
+  const isComp = notice.procedure==="Competition"||notice.nature==="Competition";
   const deadline = notice.deadline ? new Date(notice.deadline).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"}) : null;
-  const srcColor = notice._source==="BOAMP" ? {bg:"#dbeafe",fg:"#1d4ed8"} : notice._source==="TED/OJEU" ? {bg:"#d1fae5",fg:"#065f46"} : {bg:"#fef3c7",fg:"#92400e"};
+  const srcColor = SOURCE_COLORS[notice._source]||{bg:"#f1f5f9",fg:"#475569"};
 
   let summaryHtml = "";
   if (notice._summary) {
@@ -276,17 +495,14 @@ function buildNoticeHtml(notice, lang) {
       : lang==="fr"
       ? [["Coût total"],["Type de projet"],["Concours"],["Critères de sélection"],["Pièces à fournir"],["Calendrier"],["Indemnité de concours"]]
       : [["Total cost"],["Project type"],["Competition"],["Selection criteria"],["Deliverables"],["Schedule"],["Competition fee"]];
-
     const rows = fields.filter(([k])=>s[k]&&s[k]!=="不明"&&s[k]!=="N/A")
       .map(([k])=>`<tr><td style="padding:3px 10px 3px 0;font-size:11px;color:#6b7280;white-space:nowrap;vertical-align:top">${k}</td><td style="padding:3px 0;font-size:11px;color:#374151;line-height:1.5">${s[k]}</td></tr>`).join("");
-
     const feeKey = lang==="ja"?"設計報酬上限":lang==="fr"?"Plafond honoraires":"Fee cap";
     const commentKey = lang==="ja"?"MKコメント":lang==="fr"?"Commentaire":"Comment";
     const feeAlert = s[feeKey]&&s[feeKey]!=="不明"&&s[feeKey]!=="N/A"
       ? `<div style="margin-top:6px;padding:7px 10px;background:#fef2f2;border-left:3px solid #dc2626;font-size:11px;color:#b91c1c">${L.feeAlert}: ${s[feeKey]}</div>` : "";
     const comment = s[commentKey]
       ? `<div style="margin-top:6px;padding:7px 10px;background:#f0f9ff;border-left:3px solid #0284c7;font-size:11px;color:#0c4a6e">💡 ${s[commentKey]}</div>` : "";
-
     if (rows||feeAlert||comment) {
       summaryHtml = `<div style="padding:12px 16px;background:#f8fafc;border-top:1px solid #e2e8f0"><div style="font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#64748b;margin-bottom:8px">✦ AI SUMMARY</div><table cellpadding="0" cellspacing="0">${rows}</table>${feeAlert}${comment}</div>`;
     }
@@ -298,7 +514,8 @@ function buildNoticeHtml(notice, lang) {
       <div style="margin-bottom:8px;display:flex;gap:5px;flex-wrap:wrap">
         <span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;background:${srcColor.bg};color:${srcColor.fg};letter-spacing:0.1em;text-transform:uppercase">${notice._source}</span>
         <span style="font-size:9px;padding:2px 7px;border-radius:3px;background:#f1f5f9;color:#475569">${geoLabel}</span>
-        ${cultural?`<span style="font-size:9px;font-weight:600;padding:2px 7px;border-radius:3px;background:#d1fae5;color:#065f46">${L.cultural}</span>`:""}
+        ${cultural?`<span style="font-size:9px;font-weight:600;padding:2px 7px;border-radius:3px;background:#d1fae5;color:#065f46">${lang==="ja"?"文化施設":lang==="fr"?"CULTUREL":"CULTURAL"}</span>`:""}
+        ${isComp?`<span style="font-size:9px;font-weight:600;padding:2px 7px;border-radius:3px;background:#fdf4ff;color:#6b21a8">${lang==="ja"?"コンペ":lang==="fr"?"CONCOURS":"COMPETITION"}</span>`:""}
         ${parseBudget(notice.budget)>=5000000?`<span style="font-size:9px;padding:2px 7px;border-radius:3px;background:#ede9fe;color:#6d28d9">+5M€</span>`:""}
       </div>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -329,14 +546,13 @@ function buildEmail(notices, lang, date) {
     if (!grouped[g]) grouped[g]=[];
     grouped[g].push(n);
   }
-
   let sections = "";
-  for (let geo=1;geo<=7;geo++) {
-    if (!grouped[geo]?.length) continue;
-    const geoLabel = GEO[geo]?.[lang==="bilingual"?"en":lang]||GEO[geo].en;
+  const geoOrder = Object.keys(grouped).sort((a,b)=>getGeoOrder(parseInt(a))-getGeoOrder(parseInt(b)));
+  for (const geo of geoOrder) {
+    const geoInfo = GEO[parseInt(geo)]||GEO[7];
+    const geoLabel = geoInfo[lang==="bilingual"?"en":lang]||geoInfo.en;
     sections += `<div style="margin-bottom:28px"><div style="font-size:10px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;padding-bottom:8px;margin-bottom:14px">${geoLabel} · ${grouped[geo].length}${lang==="ja"?"件":" notices"}</div>${grouped[geo].map(n=>buildNoticeHtml(n,lang)).join("")}</div>`;
   }
-
   const totalCount = notices.length;
   const culturalCount = notices.filter(isCultural).length;
   const largeCount = notices.filter(n=>parseBudget(n.budget)>=1000000).length;
@@ -377,18 +593,22 @@ async function runMonitor() {
   console.log(`\n${"─".repeat(50)}`);
   console.log(`🕐 MK Monitor 開始: ${new Date().toLocaleString("ja-JP",{timeZone:"Europe/Paris"})}`);
 
-  // 1. データ取得（3ソース並行）
-  const [boamp, ted, arch] = await Promise.all([fetchBOAMP(), fetchTED(), fetchArchmarathon()]);
-  const all = [...boamp, ...ted, ...arch];
-  console.log(`✅ 取得: BOAMP ${boamp.length}件 + TED ${ted.length}件 + Archmarathon ${arch.length}件`);
+  const [boamp,ted,simap,doffin,bustler,archmarathon,riba,archdaily,japan,middleEast,museumInsider] = await Promise.all([
+    fetchBOAMP(), fetchTED(), fetchSIMAP(), fetchDoffin(),
+    fetchBustler(), fetchArchmarathon(), fetchRIBA(), fetchArchDaily(),
+    fetchJapan(), fetchMiddleEast(), fetchMuseumInsider(),
+  ]);
 
-  // 2. スコアリング & フィルタリング
+  const all = [...boamp,...ted,...simap,...doffin,...bustler,...archmarathon,...riba,...archdaily,...japan,...middleEast,...museumInsider];
+  console.log(`\n✅ 合計取得: ${all.length}件`);
+
   const scored = all
     .map(n=>({...n,_score:scoreNotice(n),_geo:detectGeo(n)}))
     .filter(n=>{
       const b=parseBudget(n.budget);
       if (b>=1000000) return true;
-      if (isCultural(n)&&n._geo<=3) return true;
+      if (isCultural(n)&&[1,2,3,4,65].includes(n._geo)) return true;
+      if (n.procedure==="Competition"||n.nature==="Competition") return true;
       if (n._score>=10) return true;
       return false;
     })
@@ -397,15 +617,13 @@ async function runMonitor() {
   const priorityNotices = scored.filter(n=>n._score>=CONFIG.priorityScore);
   console.log(`📊 全案件: ${scored.length}件 / 優先度高: ${priorityNotices.length}件`);
 
-  // 3. AIサマリー（上位10件）
   console.log("🤖 AIサマリー生成中...");
   for (const n of priorityNotices.slice(0,10)) {
-    n._summary = await generateSummary(n, "bilingual");
+    n._summary = await generateSummary(n,"bilingual");
     if (n._summary) process.stdout.write(".");
   }
   console.log("\n✅ サマリー完了");
 
-  // 4. グループ別送信
   const groups = {};
   for (const r of RECIPIENTS) {
     if (!r.email) continue;
@@ -416,11 +634,9 @@ async function runMonitor() {
   for (const [groupName,group] of Object.entries(groups)) {
     const notices = group.filterLevel==="priority" ? priorityNotices : scored;
     if (notices.length===0) { console.log(`📭 ${groupName}: 対象案件なし、スキップ`); continue; }
-
-    const html    = buildEmail(notices, group.lang, new Date());
-    const subject = buildSubject(group.lang, notices.length, new Date());
+    const html    = buildEmail(notices,group.lang,new Date());
+    const subject = buildSubject(group.lang,notices.length,new Date());
     const toList  = group.recipients.map(r=>r.email);
-
     console.log(`📧 送信中 → [${groupName}] ${toList.join(", ")} (${notices.length}件)`);
     const {error} = await resend.emails.send({from:CONFIG.senderEmail,to:toList,subject,html});
     if (error) console.error(`❌ ${groupName}:`,error);
@@ -437,5 +653,5 @@ if (IS_TEST) {
   console.log("✅ MK Monitor 起動");
   console.log(`⏰ スケジュール: 毎朝7時 (${CONFIG.timezone})`);
   RECIPIENTS.forEach(r=>r.email&&console.log(`   ${r.name}: ${r.email} [${r.lang}, ${r.filterLevel}]`));
-  cron.schedule(CONFIG.schedule, ()=>runMonitor().catch(console.error), {timezone:CONFIG.timezone});
+  cron.schedule(CONFIG.schedule,()=>runMonitor().catch(console.error),{timezone:CONFIG.timezone});
 }
