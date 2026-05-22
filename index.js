@@ -16,6 +16,7 @@ const RECIPIENTS = [
   { name:"Luana",   email:process.env.EMAIL_LUANA,    filterLevel:"all",      lang:"bilingual", group:"team" },
   { name:"Joana",   email:process.env.EMAIL_JOANA,    filterLevel:"all",      lang:"bilingual", group:"team" },
   { name:"Antoine", email:process.env.EMAIL_ANTOINE,  filterLevel:"all",      lang:"bilingual", group:"team" },
+  { name:"Shohei",  email:process.env.EMAIL_SHOHEI,   filterLevel:"japan",    lang:"ja",        group:"shohei" },
 ];
 
 const CONFIG = {
@@ -26,7 +27,33 @@ const CONFIG = {
   priorityScore: parseInt(process.env.PRIORITY_SCORE || "15"),
 };
 
-// ─── 建物タイプ別キーワード・CPVコード ──────────────────────────────────────────
+// ─── ユーティリティ ────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function cleanText(str, maxLen = 400) {
+  if (!str) return "";
+  return String(str)
+    .replace(/<[^>]*>/g, "") // HTMLタグ除去
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLen);
+}
+
+
 
 const BUILDING_TYPES = {
   cultural: {
@@ -190,11 +217,17 @@ function parseRSS(xml, source, mapFn) {
   matches.forEach(item => {
     try {
       const get = (tag) => {
-        const m = item.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`, "i"));
-        return m ? m[1].trim() : "";
+        // CDATA形式と通常形式の両方に対応
+        const cdataMatch = item.match(new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>`, "i"));
+        if (cdataMatch) return cdataMatch[1].trim();
+        const normalMatch = item.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i"));
+        if (normalMatch) return cleanText(normalMatch[1]);
+        return "";
       };
       const mapped = mapFn(get, item);
-      if (mapped && mapped.title) items.push({ _source: source, ...mapped });
+      if (mapped && mapped.title && mapped.title.trim().length > 3) {
+        items.push({ _source: source, ...mapped });
+      }
     } catch(e) {}
   });
   return items;
@@ -270,19 +303,25 @@ async function fetchTED() {
     try {
       const data = await res.json();
       const notices = data.notices||data.results||data.items||[];
-      const items = notices.map(n=>({
-        _id:`ted-${n.id||Math.random()}`, _source:"TED/OJEU",
-        title:Array.isArray(n.title)?n.title[0]:n.title,
-        description:Array.isArray(n.description)?n.description[0]:n.description,
-        acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:(n["organisation-name"]||n.buyerName),
-        budget:n["value-pub"]||n["estimated-value"],
-        date_pub:n["publication-date"]||n.publicationDate,
-        deadline:n["deadline-date"]||n.submissionDeadline,
-        country:n.country||n.buyerCountry, region:n.country,
-        cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"],
-        procedure:n["procedure-type"], nature:n["notice-type"],
-        url:n.link||"https://ted.europa.eu",
-      }));
+      const items = notices.map(n=>{
+        const title = Array.isArray(n.title) ? n.title.find(t=>t&&t.length>3)||n.title[0] : n.title;
+        const desc  = Array.isArray(n.description) ? n.description.find(d=>d&&d.length>3)||n.description[0] : n.description;
+        const org   = Array.isArray(n["organisation-name"]) ? n["organisation-name"][0] : n["organisation-name"];
+        const cpv   = Array.isArray(n["cpv-code"]) ? n["cpv-code"][0] : n["cpv-code"];
+        if (!title || String(title).trim().length < 3) return null;
+        return {
+          _id:`ted-${n.id||Math.random()}`, _source:"TED/OJEU",
+          title: cleanText(title), description: cleanText(desc||""),
+          acheteur: cleanText(org||""),
+          budget:n["value-pub"]||n["estimated-value"],
+          date_pub:n["publication-date"]||n.publicationDate,
+          deadline:n["deadline-date"]||n.submissionDeadline,
+          country:n.country||n.buyerCountry, region:n.country,
+          cpv: Array.isArray(cpv) ? cpv[0] : cpv,
+          procedure:n["procedure-type"], nature:n["notice-type"],
+          url:n.link||"https://ted.europa.eu",
+        };
+      }).filter(Boolean);
       allResults.push(...items);
     } catch(e) {}
   }
@@ -649,8 +688,9 @@ function buildNoticeHtml(notice, lang) {
       </div>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
         <td style="vertical-align:top;padding-right:12px">
-          <div style="font-size:13px;font-weight:500;color:#111827;line-height:1.4">${notice.title||"—"}</div>
-          <div style="font-size:11px;color:#9ca3af;margin-top:3px">${notice.acheteur||""}</div>
+          <div style="font-size:13px;font-weight:500;color:#111827;line-height:1.4">${escapeHtml(notice.title)||"—"}</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:3px">${escapeHtml(notice.acheteur)||""}</div>
+          ${notice.description ? `<div style="font-size:11px;color:#6b7280;margin-top:6px;line-height:1.5">${escapeHtml(cleanText(notice.description, 200))}</div>` : ""}
         </td>
         <td style="vertical-align:top;text-align:right;white-space:nowrap">
           <div style="font-size:15px;font-weight:600;color:#111827;font-family:monospace">${budget}</div>
@@ -660,7 +700,7 @@ function buildNoticeHtml(notice, lang) {
         ${notice.region?`📍 ${notice.region}&nbsp;&nbsp;`:""}
         ${deadline?`<span style="color:#dc2626">⏱ ${deadline}</span>&nbsp;&nbsp;`:""}
         <a href="${notice.url}" style="color:#2563eb;text-decoration:none">→ Dossier ↗</a>
-        ${buildFollowUrl(notice) ? `&nbsp;&nbsp;<a href="${buildFollowUrl(notice)}" style="color:#059669;text-decoration:none;font-weight:600">🔔 Suivre ce projet</a>` : ""}
+        ${buildFollowUrl(notice) ? `&nbsp;&nbsp;<a href="${buildFollowUrl(notice)}" style="color:#059669;text-decoration:none;font-weight:600">🔔 Follow this project</a>` : ""}
       </div>
     </div>
     ${summaryHtml}
@@ -785,7 +825,11 @@ async function runMonitor() {
   }
 
   for (const [groupName,group] of Object.entries(groups)) {
-    const notices = group.filterLevel==="priority" ? priorityNotices : deduped;
+    let notices;
+    if (group.filterLevel==="priority")  notices = priorityNotices;
+    else if (group.filterLevel==="japan") notices = deduped.filter(n=>detectGeo(n)===4);
+    else                                  notices = deduped;
+
     if (notices.length===0) { console.log(`📭 ${groupName}: 対象案件なし、スキップ`); continue; }
     const html    = buildEmail(notices,group.lang,new Date());
     const subject = buildSubject(group.lang,notices.length,new Date());
@@ -883,11 +927,12 @@ async function sendFollowNotification(noticeData, assignedTo, assignedEmail) {
 // ─── Webサーバー（フォローページ） ────────────────────────────────────────────
 
 const TEAM_MEMBERS = [
-  { name:"HK (Hiroko Kusunoki)",  email: () => process.env.EMAIL_HK },
-  { name:"Nicolas Moreau",        email: () => process.env.EMAIL_NICOLAS },
-  { name:"Luana Zaccaron",        email: () => process.env.EMAIL_LUANA },
-  { name:"Joana Lazarova",        email: () => process.env.EMAIL_JOANA },
-  { name:"Antoine Guillaume",     email: () => process.env.EMAIL_ANTOINE },
+  { name:"HK (Hiroko Kusunoki)",      email: () => process.env.EMAIL_HK },
+  { name:"Nicolas Moreau",            email: () => process.env.EMAIL_NICOLAS },
+  { name:"Shohei Yamashita",          email: () => process.env.EMAIL_SHOHEI },
+  { name:"Luana Zaccaron",            email: () => process.env.EMAIL_LUANA },
+  { name:"Joana Lazarova",            email: () => process.env.EMAIL_JOANA },
+  { name:"Antoine Guillaume",         email: () => process.env.EMAIL_ANTOINE },
 ];
 
 app.get("/follow", (req, res) => {
@@ -939,7 +984,7 @@ app.get("/follow", (req, res) => {
 <div class="card">
   <div class="header">
     <div class="header-sub">Moreau Kusunoki Architectes — MK Monitor</div>
-    <div class="header-title">🔔 Suivi de projet</div>
+    <div class="header-title">🔔 Follow this project</div>
   </div>
   <div class="body">
     <div id="form-section">
@@ -951,19 +996,19 @@ app.get("/follow", (req, res) => {
         ${noticeData.country ? `<div class="meta-row"><span class="meta-label">Pays</span><span class="meta-value">${noticeData.country}</span></div>` : ""}
       </div>
       <hr class="divider">
-      <div class="section-label">Désigner un responsable</div>
+      <div class="section-label">Assign a responsible person</div>
       <form id="follow-form">
         <select name="assigned_to" id="assigned_to" required>
-          <option value="">— Sélectionner un responsable —</option>
+          <option value="">— Select a responsible person —</option>
           ${memberOptions}
         </select>
-        <button type="submit" id="submit-btn">Confirmer le suivi →</button>
+        <button type="submit" id="submit-btn">Assign &amp; notify team →</button>
       </form>
       ${noticeData.url ? `<div class="link">→ <a href="${noticeData.url}" target="_blank">Accéder au dossier complet ↗</a></div>` : ""}
     </div>
     <div class="success" id="success-section">
       <div class="success-icon">✅</div>
-      <div class="success-text">Suivi confirmé.<br>Le responsable et l'équipe ont été notifiés.</div>
+      <div class="success-text">Project added to follow-up.<br>The assigned person and the team have been notified.</div>
     </div>
   </div>
 </div>
@@ -1018,7 +1063,7 @@ app.get("/health", (req, res) => res.json({ status:"ok", service:"MK Monitor" })
 
 function startWebServer() {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`🌐 Webサーバー起動: port ${PORT}`);
     if (process.env.SERVICE_URL) {
       console.log(`   フォローURL: ${process.env.SERVICE_URL}/follow`);
