@@ -387,23 +387,15 @@ async function fetchBOAMP() {
   return [];
 }
 
-// ─── TED API ヘルパー（POST） ─────────────────────────────────────────────────
+// ─── TED APIヘルパー ──────────────────────────────────────────────────────────
 
 async function tedSearch(query, limit=30) {
-  // fieldsは必須。sortField/sortOrderは無効なので除外
-  const body = {
-    query,
-    fields: ["title","description","organisation-name","value-pub","cpv-code",
-             "publication-date","deadline-date","country","procedure-type","notice-type","link"],
-    page: 1,
-    limit,
-  };
+  // TED v3 GET形式
+  const params = new URLSearchParams({ q: query, limit: String(limit), page: "1" });
   try {
-    const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
-      method: "POST",
-      headers: { "Content-Type":"application/json", "Accept":"application/json",
-                 "User-Agent":"Mozilla/5.0 (compatible; MKMonitor/1.0)" },
-      body: JSON.stringify(body),
+    const res = await fetch(`https://api.ted.europa.eu/v3/notices/search?${params}`, {
+      method: "GET",
+      headers: { "Accept":"application/json", "User-Agent":"Mozilla/5.0 (compatible; MKMonitor/1.0)" },
       timeout: 15000,
     });
     if (!res.ok) {
@@ -416,6 +408,41 @@ async function tedSearch(query, limit=30) {
     console.error(`⚠️ TED error: ${e.message}`);
     return null;
   }
+}
+
+function mapTEDNotice(n, source="TED/OJEU", countryOverride=null) {
+  // レスポンス構造をログで確認（初回のみ）
+  if (!mapTEDNotice._logged && n) {
+    mapTEDNotice._logged = true;
+    console.log("  TED sample keys:", Object.keys(n).slice(0,15).join(", "));
+  }
+  const getVal = (...keys) => {
+    for (const k of keys) {
+      const v = n[k];
+      if (v && String(v).trim().length > 0) {
+        return Array.isArray(v) ? v.find(x=>x&&String(x).trim().length>2)||v[0] : v;
+      }
+    }
+    return "";
+  };
+  const title = String(getVal("title","notice-title","subject","name")||"");
+  if (title.trim().length < 3) return null;
+  return {
+    _id: `${source.toLowerCase().replace(/[^a-z]/g,"-")}-${n.id||n["publication-number"]||Math.random()}`,
+    _source: source,
+    title: cleanText(title),
+    description: cleanText(String(getVal("description","summary","object")||"")),
+    acheteur: cleanText(String(getVal("organisation-name","buyer-name","buyer","authority")||"")),
+    budget: n["value-pub"]||n["estimated-value"]||n.value||null,
+    date_pub: n["publication-date"]||n.publicationDate||n["published-date"]||null,
+    deadline: n["deadline-date"]||n.submissionDeadline||n["submission-deadline"]||null,
+    country: countryOverride||String(getVal("country","buyer-country","location")||""),
+    region:  countryOverride||String(getVal("country","buyer-country","location")||""),
+    cpv: String(getVal("cpv-code","cpv","cpvCodes")||""),
+    procedure: String(getVal("procedure-type","procedure")||""),
+    nature: String(getVal("notice-type","noticeType","type")||""),
+    url: String(getVal("link","permalink","url")||"https://ted.europa.eu"),
+  };
 }
 
 async function fetchTED() {
