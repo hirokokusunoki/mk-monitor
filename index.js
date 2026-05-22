@@ -387,20 +387,27 @@ async function fetchBOAMP() {
   return [];
 }
 
-// ─── TED APIヘルパー ──────────────────────────────────────────────────────────
+// ─── TED APIヘルパー（v2 - シンプルなフィールド名） ──────────────────────────
 
 async function tedSearch(query, limit=30) {
-  // TED v3 GET形式
-  const params = new URLSearchParams({ q: query, limit: String(limit), page: "1" });
+  // TED v2 API - 伝統的なフィールド名、GETリクエスト
+  const params = new URLSearchParams({
+    q: `content:[${query}]`,
+    fields: "title,content,nd,uris,locations,notice-type,form-type,publication-number",
+    pageSize: String(limit),
+    pageNum: "1",
+    scope: "0",
+  });
   try {
-    const res = await fetch(`https://api.ted.europa.eu/v3/notices/search?${params}`, {
+    const res = await fetch(`https://api.ted.europa.eu/v2.0/notices.json?${params}`, {
       method: "GET",
-      headers: { "Accept":"application/json", "User-Agent":"Mozilla/5.0 (compatible; MKMonitor/1.0)" },
+      headers: { "Accept":"application/json",
+                 "User-Agent":"Mozilla/5.0 (compatible; MKMonitor/1.0)" },
       timeout: 15000,
     });
     if (!res.ok) {
       const errText = await res.text().catch(()=>"");
-      console.error(`⚠️ TED HTTP ${res.status}: ${errText.slice(0,200)}`);
+      console.error(`⚠️ TED v2 HTTP ${res.status}: ${errText.slice(0,200)}`);
       return null;
     }
     return res;
@@ -411,37 +418,36 @@ async function tedSearch(query, limit=30) {
 }
 
 function mapTEDNotice(n, source="TED/OJEU", countryOverride=null) {
-  // レスポンス構造をログで確認（初回のみ）
+  // TED v2レスポンス構造に対応
   if (!mapTEDNotice._logged && n) {
     mapTEDNotice._logged = true;
-    console.log("  TED sample keys:", Object.keys(n).slice(0,15).join(", "));
+    console.log("  TED v2 sample keys:", Object.keys(n).slice(0,15).join(", "));
   }
-  const getVal = (...keys) => {
-    for (const k of keys) {
-      const v = n[k];
-      if (v && String(v).trim().length > 0) {
-        return Array.isArray(v) ? v.find(x=>x&&String(x).trim().length>2)||v[0] : v;
-      }
-    }
-    return "";
-  };
-  const title = String(getVal("title","notice-title","subject","name")||"");
-  if (title.trim().length < 3) return null;
+  // v2の構造: n.content[0], n.title[0], n.uris[0], n.locations[0]
+  const title = Array.isArray(n.title)?n.title[0]:
+    (Array.isArray(n.content)?n.content[0]?.substring(0,100):n.title||"");
+  const titleStr = String(title||"").trim();
+  if (titleStr.length < 3) return null;
+
+  const loc = Array.isArray(n.locations)?n.locations[0]||"":"";
+  const uri = Array.isArray(n.uris)?n.uris[0]||"":"";
+  const nd  = n["publication-number"]||n.nd||"";
+
   return {
-    _id: `${source.toLowerCase().replace(/[^a-z]/g,"-")}-${n.id||n["publication-number"]||Math.random()}`,
+    _id: `${source.toLowerCase().replace(/[^a-z]/g,"-")}-${nd||Math.random()}`,
     _source: source,
-    title: cleanText(title),
-    description: cleanText(String(getVal("description","summary","object")||"")),
-    acheteur: cleanText(String(getVal("organisation-name","buyer-name","buyer","authority")||"")),
-    budget: n["value-pub"]||n["estimated-value"]||n.value||null,
-    date_pub: n["publication-date"]||n.publicationDate||n["published-date"]||null,
-    deadline: n["deadline-date"]||n.submissionDeadline||n["submission-deadline"]||null,
-    country: countryOverride||String(getVal("country","buyer-country","location")||""),
-    region:  countryOverride||String(getVal("country","buyer-country","location")||""),
-    cpv: String(getVal("cpv-code","cpv","cpvCodes")||""),
-    procedure: String(getVal("procedure-type","procedure")||""),
-    nature: String(getVal("notice-type","noticeType","type")||""),
-    url: String(getVal("link","permalink","url")||"https://ted.europa.eu"),
+    title: cleanText(titleStr),
+    description: cleanText(Array.isArray(n.content)?n.content[0]||"":""),
+    acheteur: "",
+    budget: null,
+    date_pub: n["publication-date"]||null,
+    deadline: null,
+    country: countryOverride||String(loc).split(",").pop()?.trim()||"",
+    region:  countryOverride||String(loc)||"",
+    cpv: "",
+    procedure: n["form-type"]||n["notice-type"]||"",
+    nature: n["notice-type"]||"",
+    url: uri||`https://ted.europa.eu/udl?uri=TED:NOTICE:${nd}:TEXT:EN:HTML`,
   };
 }
 
