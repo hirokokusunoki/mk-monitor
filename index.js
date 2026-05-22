@@ -138,7 +138,40 @@ function detectBuildingType(notice) {
   return null;
 }
 
-// ─── 排他性条項（Exclusivité）検出 ────────────────────────────────────────────
+function extractDeadlineFromText(text) {
+  if (!text) return null;
+  // 日付パターンを説明文から抽出
+  const patterns = [
+    // 2025年3月31日、2025/03/31
+    /(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})日?/,
+    // 31 March 2025, March 31 2025
+    /(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i,
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})[,\s]+(\d{4})/i,
+    // 31/03/2025, 31-03-2025
+    /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/,
+    // deadline: 31 mars 2025
+    /(?:deadline|échéance|date limite|締切|応募期限)[^\d]*(\d{1,2})[\/\-\s](\d{1,2})[\/\-\s](\d{4})/i,
+  ];
+
+  const deadlineKW = ["deadline","date limite","échéance","closing date","submission","応募期限","締切","提出期限"];
+  const lowerText = text.toLowerCase();
+  const hasDeadlineKW = deadlineKW.some(k => lowerText.includes(k));
+
+  if (!hasDeadlineKW) return null;
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      try {
+        const date = new Date(match[0].replace(/年|月/g, "/").replace(/日/g, ""));
+        if (!isNaN(date.getTime()) && date > new Date()) return date.toISOString();
+      } catch(e) {}
+    }
+  }
+  return null;
+}
+
+
 
 const EXCLUSIVITY_KW = [
   // フランス語
@@ -467,15 +500,20 @@ async function fetchJapan() {
   const jiaRes = await safeFetch("https://www.jia.or.jp/competition/feed/",{},"JIA");
   if (jiaRes) {
     const xml = await jiaRes.text();
-    const items = parseRSS(xml,"JIA",(get)=>({
-      _id:`jia-${Math.random()}`, title:get("title"),
-      description:get("description").replace(/<[^>]*>/g,"").slice(0,400),
-      acheteur:"JIA 日本建築家協会", budget:null,
-      date_pub:get("pubDate"), deadline:null,
-      country:"Japan", region:"Japan", cpv:"71200000",
-      procedure:"Competition", nature:"Competition",
-      url:get("link")||"https://www.jia.or.jp/competition/",
-    }));
+    const items = parseRSS(xml, "JIA", (get) => {
+      const desc = get("description").replace(/<[^>]*>/g,"").slice(0,600);
+      const extractedDeadline = extractDeadlineFromText(desc);
+      return {
+        _id:`jia-${Math.random()}`, title:get("title"),
+        description: cleanText(desc, 400),
+        acheteur:"JIA 日本建築家協会", budget:null,
+        date_pub:get("pubDate"),
+        deadline: extractedDeadline,
+        country:"Japan", region:"Japan", cpv:"71200000",
+        procedure:"Competition", nature:"Competition",
+        url:get("link")||"https://www.jia.or.jp/competition/",
+      };
+    });
     console.log(`  ✅ JIA: ${items.length}件`);
     allResults.push(...items);
   }
@@ -1063,7 +1101,7 @@ document.getElementById("follow-form").addEventListener("submit", async function
     const res = await fetch("/follow/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ d: "${req.query.d}", assigned_to: assignedTo })
+      body: JSON.stringify({ d: "${req.query.d || ""}", assigned_to: assignedTo })
     });
     if (res.ok) {
       document.getElementById("form-section").style.display = "none";
