@@ -493,7 +493,7 @@ async function fetchMuseumInsider() {
 
 // ─── AIサマリー ────────────────────────────────────────────────────────────────
 
-async function generateSummary(notice, lang) {
+async function generateSummary(notice) {
   if (!CONFIG.anthropicKey) return null;
   const noticeText = [
     notice.title       && `Title: ${notice.title}`,
@@ -505,17 +505,65 @@ async function generateSummary(notice, lang) {
     notice.deadline    && `Deadline: ${notice.deadline}`,
   ].filter(Boolean).join("\n");
 
-  const prompts = {
-    ja:`Moreau Kusunoki建築事務所向けに以下の案件を分析。不明な場合は「不明」。JSONのみ返答。\n\n${noticeText}\n\n{"総工費":"","建築面積":"","建築タイプ":"","コンペの有無":"あり/なし/不明","審査基準":"","審査員":"","提出物":"","スケジュール":"","敷地の特徴":"","設計チーム構成":"","参加報酬":"","設計報酬上限":"","MKコメント":""}`,
-    fr:`Analysez pour Moreau Kusunoki Architectes. "N/A" si inconnu. JSON uniquement.\n\n${noticeText}\n\n{"Coût total":"","Surface":"","Type de projet":"","Concours":"Oui/Non/N/A","Critères de sélection":"","Jury":"","Pièces à fournir":"","Calendrier":"","Caractéristiques du site":"","Équipe requise":"","Indemnité de concours":"","Plafond honoraires":"","Commentaire":""}`,
-    bilingual:`Analyse for Moreau Kusunoki Architects. "N/A" if unknown. JSON only.\n\n${noticeText}\n\n{"Total cost":"","Area":"","Project type":"","Competition":"Yes/No/N/A","Selection criteria":"","Jury":"","Deliverables":"","Schedule":"","Site characteristics":"","Team required":"","Competition fee":"","Fee cap":"","Comment":""}`,
-  };
+  const prompt = `Analyse this procurement notice for Moreau Kusunoki Architects (Paris) and return a summary in THREE languages simultaneously. Return ONLY valid JSON, no markdown, no explanation.
+
+Notice:
+${noticeText}
+
+Return this exact structure (translate values to each language, use "不明"/"N/A"/"N/A" if unknown):
+{
+  "ja": {
+    "総工費": "",
+    "建築面積": "",
+    "建築タイプ": "新築／増築／改修／不明",
+    "コンペの有無": "あり／なし／不明",
+    "審査基準": "",
+    "審査員": "",
+    "提出物": "",
+    "スケジュール": "",
+    "敷地の特徴": "",
+    "設計チーム構成": "",
+    "参加報酬": "",
+    "設計報酬上限": "",
+    "MKコメント": "MK事務所への適合性について一言"
+  },
+  "fr": {
+    "Coût total": "",
+    "Surface": "",
+    "Type de projet": "Neuf/Extension/Réhabilitation/N/A",
+    "Concours": "Oui/Non/N/A",
+    "Critères de sélection": "",
+    "Jury": "",
+    "Pièces à fournir": "",
+    "Calendrier": "",
+    "Caractéristiques du site": "",
+    "Équipe requise": "",
+    "Indemnité de concours": "",
+    "Plafond honoraires": "",
+    "Commentaire": "Une phrase sur la pertinence pour MK"
+  },
+  "en": {
+    "Total cost": "",
+    "Area": "",
+    "Project type": "New build/Extension/Renovation/N/A",
+    "Competition": "Yes/No/N/A",
+    "Selection criteria": "",
+    "Jury": "",
+    "Deliverables": "",
+    "Schedule": "",
+    "Site characteristics": "",
+    "Team required": "",
+    "Competition fee": "",
+    "Fee cap": "",
+    "Comment": "One sentence on relevance for MK"
+  }
+}`;
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":CONFIG.anthropicKey,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,messages:[{role:"user",content:prompts[lang]||prompts.bilingual}]}),
+      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,messages:[{role:"user",content:prompt}]}),
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -556,22 +604,32 @@ function buildNoticeHtml(notice, lang) {
 
   let summaryHtml = "";
   if (notice._summary) {
-    const s = notice._summary;
+    // トリリンガルサマリーから正しい言語を選択
+    const langKey = lang === "ja" ? "ja" : lang === "fr" ? "fr" : "en";
+    const s = notice._summary[langKey] || notice._summary.en || notice._summary;
+
     const fields = lang==="ja"
-      ? [["総工費"],["建築タイプ"],["コンペの有無"],["審査基準"],["提出物"],["スケジュール"],["参加報酬"]]
+      ? ["総工費","建築面積","建築タイプ","コンペの有無","審査基準","審査員","提出物","スケジュール","敷地の特徴","設計チーム構成","参加報酬"]
       : lang==="fr"
-      ? [["Coût total"],["Type de projet"],["Concours"],["Critères de sélection"],["Pièces à fournir"],["Calendrier"],["Indemnité de concours"]]
-      : [["Total cost"],["Project type"],["Competition"],["Selection criteria"],["Deliverables"],["Schedule"],["Competition fee"]];
-    const rows = fields.filter(([k])=>s[k]&&s[k]!=="不明"&&s[k]!=="N/A")
-      .map(([k])=>`<tr><td style="padding:3px 10px 3px 0;font-size:11px;color:#6b7280;white-space:nowrap;vertical-align:top">${k}</td><td style="padding:3px 0;font-size:11px;color:#374151;line-height:1.5">${s[k]}</td></tr>`).join("");
+      ? ["Coût total","Surface","Type de projet","Concours","Critères de sélection","Jury","Pièces à fournir","Calendrier","Caractéristiques du site","Équipe requise","Indemnité de concours"]
+      : ["Total cost","Area","Project type","Competition","Selection criteria","Jury","Deliverables","Schedule","Site characteristics","Team required","Competition fee"];
+
+    const rows = fields.filter(k=>s[k]&&s[k]!=="不明"&&s[k]!=="N/A"&&s[k]!=="")
+      .map(k=>`<tr><td style="padding:3px 10px 3px 0;font-size:11px;color:#6b7280;white-space:nowrap;vertical-align:top">${k}</td><td style="padding:3px 0;font-size:11px;color:#374151;line-height:1.5">${s[k]}</td></tr>`).join("");
+
     const feeKey = lang==="ja"?"設計報酬上限":lang==="fr"?"Plafond honoraires":"Fee cap";
     const commentKey = lang==="ja"?"MKコメント":lang==="fr"?"Commentaire":"Comment";
-    const feeAlert = s[feeKey]&&s[feeKey]!=="不明"&&s[feeKey]!=="N/A"
-      ? `<div style="margin-top:6px;padding:7px 10px;background:#fef2f2;border-left:3px solid #dc2626;font-size:11px;color:#b91c1c">${L.feeAlert}: ${s[feeKey]}</div>` : "";
-    const comment = s[commentKey]
-      ? `<div style="margin-top:6px;padding:7px 10px;background:#f0f9ff;border-left:3px solid #0284c7;font-size:11px;color:#0c4a6e">💡 ${s[commentKey]}</div>` : "";
+    const feeVal = s[feeKey];
+    const commentVal = s[commentKey];
+
+    const feeAlert = feeVal&&feeVal!=="不明"&&feeVal!=="N/A"&&feeVal!==""
+      ? `<div style="margin-top:6px;padding:7px 10px;background:#fef2f2;border-left:3px solid #dc2626;font-size:11px;color:#b91c1c">${L.feeAlert}: ${feeVal}</div>` : "";
+    const comment = commentVal&&commentVal!=="不明"&&commentVal!=="N/A"&&commentVal!==""
+      ? `<div style="margin-top:6px;padding:7px 10px;background:#f0f9ff;border-left:3px solid #0284c7;font-size:11px;color:#0c4a6e">💡 ${commentVal}</div>` : "";
+
     if (rows||feeAlert||comment) {
-      summaryHtml = `<div style="padding:12px 16px;background:#f8fafc;border-top:1px solid #e2e8f0"><div style="font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#64748b;margin-bottom:8px">✦ AI SUMMARY</div><table cellpadding="0" cellspacing="0">${rows}</table>${feeAlert}${comment}</div>`;
+      const summaryTitle = lang==="ja"?"✦ AI要綱サマリー":lang==="fr"?"✦ SYNTHÈSE IA":"✦ AI SUMMARY";
+      summaryHtml = `<div style="padding:12px 16px;background:#f8fafc;border-top:1px solid #e2e8f0"><div style="font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#64748b;margin-bottom:8px">${summaryTitle}</div><table cellpadding="0" cellspacing="0">${rows}</table>${feeAlert}${comment}</div>`;
     }
   }
 
@@ -669,19 +727,26 @@ async function runMonitor() {
 
   const scored = all
     .map(n=>({...n,_score:scoreNotice(n),_geo:detectGeo(n)}))
+    // タイトルのない案件を除外
+    .filter(n => n.title && n.title.trim().length > 3)
     .filter(n=>{
       const b = parseBudget(n.budget);
       const geo = n._geo;
       const bType = detectBuildingType(n);
       const isComp = n.procedure==="Competition"||n.nature==="Competition";
-      // 1M€以上は全て
-      if (b>=1000000) return true;
-      // コンペは全て
+      const hasBuildingType = bType !== null;
+
+      // コンペは全て含める（タイトルがある場合）
       if (isComp) return true;
-      // 優先地域（仏・スイス・北欧・欧州・日本・中東）の対象施設は金額不問
-      if ([1,2,3,4,65].includes(geo) && bType) return true;
-      // スコア閾値
-      if (n._score>=15) return true;
+      // 1M€以上かつ建物タイプが特定できる場合
+      if (b>=1000000 && hasBuildingType) return true;
+      // 5M€以上は建物タイプ不明でも含める
+      if (b>=5000000) return true;
+      // 優先地域（仏・スイス・北欧・欧州・日本・中東）の対象施設は500K€以上
+      if ([1,2,3,4,65].includes(geo) && hasBuildingType && b>=500000) return true;
+      // AlUla・NEOMは金額不問
+      const text = [n.title,n.description].filter(Boolean).join(" ").toLowerCase();
+      if (text.includes("alula")||text.includes("neom")) return true;
       return false;
     })
     .sort((a,b)=>b._score-a._score);
@@ -702,7 +767,7 @@ async function runMonitor() {
 
   console.log("🤖 AIサマリー生成中...");
   for (const n of priorityNotices.slice(0,10)) {
-    n._summary = await generateSummary(n,"bilingual");
+    n._summary = await generateSummary(n);
     if (n._summary) process.stdout.write(".");
   }
   console.log("\n✅ サマリー完了");
