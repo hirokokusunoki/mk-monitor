@@ -310,35 +310,34 @@ async function safeFetch(url, options={}, source="") {
 async function fetchBOAMP() {
   console.log("📡 BOAMP...");
 
-  const kwFilter = ["musée","théâtre","bibliothèque","école","hôtel","gare","bureau","campus","auditorium","conservatoire","médiathèque"]
-    .map(k=>`objet like "%${k}%"`).join(" OR ");
-  const encoded = encodeURIComponent(kwFilter);
-
-  // 複数のBOAMPエンドポイントを順番に試行
+  // boamp-datadila.opendatasoft.comはアクセス可能（400はクエリ形式の問題）
+  // まずフィルターなしで試行し、その後クライアントサイドでフィルタリング
   const endpoints = [
-    // 旧OpenDataSoftドメイン（Railwayからアクセス可能な可能性が高い）
-    `https://boamp-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/boamp/records?where=${encoded}&order_by=date_publication%20DESC&limit=60`,
-    // data.gouv.fr タブular API
-    `https://tabular-api.data.gouv.fr/api/resources/5cd57bf6-8b4c-4179-299e-b0e900000000/data/?page=1&page_size=50`,
-    // 直接API（失敗していたもの - 念のため再試行）
-    `https://api.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records?where=${encoded}&order_by=date_publication%20DESC&limit=60`,
+    // フィルターなし版（最も互換性が高い）
+    `https://boamp-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/boamp/records?limit=80&offset=0`,
+    // シンプルなキーワード版
+    `https://boamp-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/boamp/records?q=architecture+culturel+musée+école&limit=80`,
+    // api.boamp.fr フィルターなし
+    `https://api.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records?limit=80&offset=0`,
   ];
+
+  const KW = ["musée","théâtre","bibliothèque","école","hôtel","gare","bureau","campus",
+              "auditorium","conservatoire","médiathèque","culturel","université","sport",
+              "mairie","maison","centre","équipement"];
 
   for (const url of endpoints) {
     try {
       const res = await fetch(url, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
           "Accept": "application/json",
-          "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
-          "Referer": "https://www.boamp.fr/",
-          "Origin": "https://www.boamp.fr",
         },
         timeout: 15000,
       });
 
       if (!res.ok) {
-        console.error(`  ⚠️ BOAMP ${res.status} (${url.split("/")[2]})`);
+        const errText = await res.text().catch(()=>"").then(t=>t.slice(0,100));
+        console.error(`  ⚠️ BOAMP ${res.status} (${url.split("/")[2]}): ${errText}`);
         continue;
       }
 
@@ -350,9 +349,15 @@ async function fetchBOAMP() {
         continue;
       }
 
+      // クライアントサイドでフィルタリング
       const results = rows.map(r => {
         const f = r.record?.fields || r.fields || r;
         if (!f.objet || f.objet.trim().length < 3) return null;
+        const text = (f.objet||"").toLowerCase();
+        const cpv = String(f.code_cpv||f.cpv||"");
+        const isRelevant = KW.some(k=>text.includes(k)) ||
+          ["7120","7122","4521","9200"].some(c=>cpv.startsWith(c));
+        if (!isRelevant) return null;
         return {
           _id:`boamp-${f.id||f.idweb||Math.random()}`, _source:"BOAMP",
           title: cleanText(f.objet),
@@ -370,7 +375,7 @@ async function fetchBOAMP() {
         };
       }).filter(Boolean);
 
-      console.log(`  ✅ BOAMP: ${results.length}件 (${url.split("/")[2]})`);
+      console.log(`  ✅ BOAMP: ${results.length}件 / ${rows.length}件中 (${url.split("/")[2]})`);
       return results;
 
     } catch(e) {
@@ -385,15 +390,8 @@ async function fetchBOAMP() {
 // ─── TED API ヘルパー（POST） ─────────────────────────────────────────────────
 
 async function tedSearch(query, limit=30) {
-  const body = {
-    query,
-    fields: ["title","description","organisation-name","value-pub","cpv-code",
-             "publication-date","deadline-date","country","procedure-type","notice-type","link"],
-    page: 1,
-    limit,
-    sortField: "publicationDate",
-    sortOrder: "DESC",
-  };
+  // sortField/sortOrderは無効なフィールドのため除外
+  const body = { query, page: 1, limit };
   try {
     const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
       method: "POST",
@@ -404,7 +402,7 @@ async function tedSearch(query, limit=30) {
     });
     if (!res.ok) {
       const errText = await res.text().catch(()=>"");
-      console.error(`⚠️ TED HTTP ${res.status}: ${errText.slice(0,300)}`);
+      console.error(`⚠️ TED HTTP ${res.status}: ${errText.slice(0,200)}`);
       return null;
     }
     return res;
@@ -434,33 +432,6 @@ async function fetchTED() {
       const items = notices.map(n=>mapTEDNotice(n,"TED/OJEU")).filter(Boolean);
       allResults.push(...items);
     } catch(e) { console.error("TED parse:", e.message); }
-  }
-
-  // フォーマット1が全て失敗した場合、フォーマット2を試みる
-  if (allResults.length === 0) {
-    console.log("  TED: フォーマット2を試行中...");
-    try {
-      const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "Accept":"application/json" },
-        body: JSON.stringify({
-          q: "architect museum cultural school hotel",
-          pageSize: 30,
-          pageNum: 1,
-        }),
-        timeout: 15000,
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const notices = data.notices||data.results||data.items||[];
-        const items = notices.map(n=>mapTEDNotice(n,"TED/OJEU")).filter(Boolean);
-        allResults.push(...items);
-        console.log(`  ✅ TED (format2): ${items.length}件`);
-      } else {
-        const errText = await res.text().catch(()=>"");
-        console.error(`  ⚠️ TED format2 ${res.status}: ${errText.slice(0,200)}`);
-      }
-    } catch(e) { console.error("TED format2:", e.message); }
   }
 
   const unique = allResults.filter((n,i,arr)=>arr.findIndex(x=>x._id===n._id)===i);
