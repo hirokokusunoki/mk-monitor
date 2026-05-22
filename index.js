@@ -1,10 +1,14 @@
 require("dotenv").config();
-const cron = require("node-cron");
-const fetch = require("node-fetch");
+const cron    = require("node-cron");
+const fetch   = require("node-fetch");
+const express = require("express");
 const { Resend } = require("resend");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const IS_TEST = process.argv.includes("--test");
+const app = express();
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
 const RECIPIENTS = [
   { name:"HK",      email:process.env.EMAIL_HK,      filterLevel:"priority", lang:"ja",        group:"hk" },
@@ -656,6 +660,7 @@ function buildNoticeHtml(notice, lang) {
         ${notice.region?`📍 ${notice.region}&nbsp;&nbsp;`:""}
         ${deadline?`<span style="color:#dc2626">⏱ ${deadline}</span>&nbsp;&nbsp;`:""}
         <a href="${notice.url}" style="color:#2563eb;text-decoration:none">→ Dossier ↗</a>
+        ${buildFollowUrl(notice) ? `&nbsp;&nbsp;<a href="${buildFollowUrl(notice)}" style="color:#059669;text-decoration:none;font-weight:600">🔔 Suivre ce projet</a>` : ""}
       </div>
     </div>
     ${summaryHtml}
@@ -792,12 +797,245 @@ async function runMonitor() {
   }
 }
 
-// ─── 起動 ─────────────────────────────────────────────────────────────────────
+// ─── フォローリンク生成 ────────────────────────────────────────────────────────
+
+function buildFollowUrl(notice) {
+  const SERVICE_URL = process.env.SERVICE_URL || "";
+  if (!SERVICE_URL) return null;
+  const data = {
+    title:   notice.title || "",
+    source:  notice._source || "",
+    url:     notice.url || "",
+    acheteur:notice.acheteur || "",
+    budget:  formatBudget(notice.budget),
+    country: notice.country || notice.region || "",
+    geo:     notice._geo || 7,
+  };
+  const encoded = Buffer.from(JSON.stringify(data)).toString("base64url");
+  return `${SERVICE_URL}/follow?d=${encoded}`;
+}
+
+// ─── フォロー通知メール ────────────────────────────────────────────────────────
+
+async function sendFollowNotification(noticeData, assignedTo, assignedEmail) {
+  const teamMembers = RECIPIENTS.filter(r => r.email);
+  const toList = teamMembers.map(r => r.email);
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background:#f8fafc;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif">
+<div style="max-width:600px;margin:0 auto;padding:20px 16px">
+  <div style="background:#0f172a;border-radius:6px 6px 0 0;padding:20px 28px">
+    <div style="font-size:9px;color:#475569;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:5px">Moreau Kusunoki Architectes</div>
+    <h1 style="margin:0;font-size:18px;font-weight:300;color:#f1f5f9;letter-spacing:0.1em;text-transform:uppercase">
+      🔔 Nouveau projet en suivi
+    </h1>
+  </div>
+  <div style="background:white;border-radius:0 0 6px 6px;padding:24px 28px;border:1px solid #e2e8f0;border-top:none">
+    <div style="padding:16px;background:#f0f9ff;border-left:4px solid #0284c7;margin-bottom:20px">
+      <div style="font-size:12px;color:#0369a1;font-weight:600;margin-bottom:4px">RESPONSABLE DÉSIGNÉ</div>
+      <div style="font-size:18px;font-weight:600;color:#0c4a6e">${assignedTo}</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap;vertical-align:top">Projet</td>
+        <td style="padding:8px 0;color:#111827;font-weight:500">${noticeData.title}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Source</td>
+        <td style="padding:8px 0;color:#111827">${noticeData.source}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Maître d'ouvrage</td>
+        <td style="padding:8px 0;color:#111827">${noticeData.acheteur||"—"}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f1f5f9">
+        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Budget</td>
+        <td style="padding:8px 0;color:#111827">${noticeData.budget}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Pays</td>
+        <td style="padding:8px 0;color:#111827">${noticeData.country||"—"}</td>
+      </tr>
+    </table>
+    <div style="margin-top:20px">
+      <a href="${noticeData.url}" style="display:inline-block;padding:10px 20px;background:#0f172a;color:white;text-decoration:none;font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;border-radius:3px">
+        → Accéder au dossier complet ↗
+      </a>
+    </div>
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid #f1f5f9;font-size:10px;color:#94a3b8">
+      Moreau Kusunoki Architectes — MK Monitor · Suivi de projet automatique
+    </div>
+  </div>
+</div>
+</body></html>`;
+
+  const { error } = await resend.emails.send({
+    from:    CONFIG.senderEmail,
+    to:      toList,
+    subject: `[MK Monitor] Nouveau suivi : ${noticeData.title.slice(0,60)}${noticeData.title.length>60?"…":""}`,
+    html,
+  });
+
+  if (error) console.error("フォロー通知エラー:", error);
+  else       console.log(`✅ フォロー通知送信完了 → ${toList.join(", ")}`);
+}
+
+// ─── Webサーバー（フォローページ） ────────────────────────────────────────────
+
+const TEAM_MEMBERS = [
+  { name:"HK (Hiroko Kusunoki)",  email: () => process.env.EMAIL_HK },
+  { name:"Nicolas Moreau",        email: () => process.env.EMAIL_NICOLAS },
+  { name:"Luana Zaccaron",        email: () => process.env.EMAIL_LUANA },
+  { name:"Joana Lazarova",        email: () => process.env.EMAIL_JOANA },
+  { name:"Antoine Guillaume",     email: () => process.env.EMAIL_ANTOINE },
+];
+
+app.get("/follow", (req, res) => {
+  let noticeData = {};
+  try {
+    noticeData = JSON.parse(Buffer.from(req.query.d || "", "base64url").toString());
+  } catch(e) {
+    return res.status(400).send("Lien invalide.");
+  }
+
+  const memberOptions = TEAM_MEMBERS.map(m =>
+    `<option value="${m.name}">${m.name}</option>`
+  ).join("");
+
+  res.send(`<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MK Monitor — Suivi de projet</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Helvetica Neue',Helvetica,Arial,sans-serif; background:#f0efed; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .card { background:white; border-radius:6px; overflow:hidden; width:100%; max-width:520px; box-shadow:0 4px 24px rgba(0,0,0,0.08); }
+  .header { background:#0f172a; padding:20px 24px; }
+  .header-sub { font-size:9px; color:#475569; letter-spacing:0.2em; text-transform:uppercase; margin-bottom:6px; }
+  .header-title { font-size:16px; font-weight:300; color:#f1f5f9; letter-spacing:0.12em; text-transform:uppercase; }
+  .body { padding:24px; }
+  .notice-title { font-size:15px; font-weight:500; color:#111827; line-height:1.4; margin-bottom:12px; }
+  .meta { display:grid; gap:6px; margin-bottom:24px; }
+  .meta-row { display:flex; gap:12px; font-size:12px; }
+  .meta-label { color:#9ca3af; min-width:100px; flex-shrink:0; }
+  .meta-value { color:#374151; }
+  .divider { border:none; border-top:1px solid #f1f5f9; margin:20px 0; }
+  .section-label { font-size:9px; font-weight:700; letter-spacing:0.15em; text-transform:uppercase; color:#64748b; margin-bottom:10px; }
+  select { width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:4px; font-size:13px; color:#111827; background:white; appearance:none; cursor:pointer; font-family:inherit; }
+  select:focus { outline:none; border-color:#0f172a; }
+  button { width:100%; margin-top:12px; padding:12px; background:#0f172a; color:white; border:none; border-radius:4px; font-size:11px; font-weight:500; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; font-family:inherit; transition:background 0.15s; }
+  button:hover { background:#1e293b; }
+  button:disabled { background:#9ca3af; cursor:not-allowed; }
+  .success { display:none; text-align:center; padding:24px; }
+  .success-icon { font-size:40px; margin-bottom:12px; }
+  .success-text { font-size:14px; color:#374151; }
+  .link { font-size:11px; color:#6b7280; margin-top:16px; }
+  .link a { color:#2563eb; text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="header-sub">Moreau Kusunoki Architectes — MK Monitor</div>
+    <div class="header-title">🔔 Suivi de projet</div>
+  </div>
+  <div class="body">
+    <div id="form-section">
+      <div class="notice-title">${noticeData.title||"—"}</div>
+      <div class="meta">
+        ${noticeData.source ? `<div class="meta-row"><span class="meta-label">Source</span><span class="meta-value">${noticeData.source}</span></div>` : ""}
+        ${noticeData.acheteur ? `<div class="meta-row"><span class="meta-label">Maître d'ouvrage</span><span class="meta-value">${noticeData.acheteur}</span></div>` : ""}
+        ${noticeData.budget && noticeData.budget !== "—" ? `<div class="meta-row"><span class="meta-label">Budget</span><span class="meta-value">${noticeData.budget}</span></div>` : ""}
+        ${noticeData.country ? `<div class="meta-row"><span class="meta-label">Pays</span><span class="meta-value">${noticeData.country}</span></div>` : ""}
+      </div>
+      <hr class="divider">
+      <div class="section-label">Désigner un responsable</div>
+      <form id="follow-form">
+        <select name="assigned_to" id="assigned_to" required>
+          <option value="">— Sélectionner un responsable —</option>
+          ${memberOptions}
+        </select>
+        <button type="submit" id="submit-btn">Confirmer le suivi →</button>
+      </form>
+      ${noticeData.url ? `<div class="link">→ <a href="${noticeData.url}" target="_blank">Accéder au dossier complet ↗</a></div>` : ""}
+    </div>
+    <div class="success" id="success-section">
+      <div class="success-icon">✅</div>
+      <div class="success-text">Suivi confirmé.<br>Le responsable et l'équipe ont été notifiés.</div>
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById("follow-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  const btn = document.getElementById("submit-btn");
+  const assignedTo = document.getElementById("assigned_to").value;
+  if (!assignedTo) return;
+  btn.disabled = true;
+  btn.textContent = "Envoi en cours…";
+  try {
+    const res = await fetch("/follow/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ d: "${req.query.d}", assigned_to: assignedTo })
+    });
+    if (res.ok) {
+      document.getElementById("form-section").style.display = "none";
+      document.getElementById("success-section").style.display = "block";
+    } else {
+      btn.disabled = false;
+      btn.textContent = "Confirmer le suivi →";
+      alert("Erreur lors de l'envoi. Veuillez réessayer.");
+    }
+  } catch(err) {
+    btn.disabled = false;
+    btn.textContent = "Confirmer le suivi →";
+    alert("Erreur réseau. Veuillez réessayer.");
+  }
+});
+</script>
+</body>
+</html>`);
+});
+
+app.post("/follow/confirm", async (req, res) => {
+  try {
+    const { d, assigned_to } = req.body;
+    const noticeData = JSON.parse(Buffer.from(d || "", "base64url").toString());
+    const member = TEAM_MEMBERS.find(m => m.name === assigned_to);
+    const assignedEmail = member ? member.email() : null;
+    await sendFollowNotification(noticeData, assigned_to, assignedEmail);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error("Follow confirm error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/health", (req, res) => res.json({ status:"ok", service:"MK Monitor" }));
+
+function startWebServer() {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`🌐 Webサーバー起動: port ${PORT}`);
+    if (process.env.SERVICE_URL) {
+      console.log(`   フォローURL: ${process.env.SERVICE_URL}/follow`);
+    } else {
+      console.log("   ⚠️  SERVICE_URL未設定 — フォローリンクは無効");
+    }
+  });
+}
+
+
 
 if (IS_TEST) {
   console.log("🧪 テストモード実行...");
+  startWebServer();
   runMonitor().catch(console.error);
 } else {
+  startWebServer();
   console.log("✅ MK Monitor 起動");
   console.log(`⏰ スケジュール: 毎朝7時 (${CONFIG.timezone})`);
   RECIPIENTS.forEach(r=>r.email&&console.log(`   ${r.name}: ${r.email} [${r.lang}, ${r.filterLevel}]`));
