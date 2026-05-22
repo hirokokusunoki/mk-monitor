@@ -23,7 +23,7 @@ const CONFIG = {
   senderEmail:   process.env.SENDER_EMAIL || "onboarding@resend.dev",
   anthropicKey:  process.env.ANTHROPIC_API_KEY,
   timezone:      "Europe/Paris",
-  schedule:      "* * * * *",
+  schedule:      "0 7 * * *",
   priorityScore: parseInt(process.env.PRIORITY_SCORE || "15"),
 };
 
@@ -1282,6 +1282,17 @@ app.get("/dashboard", (req, res) => {
 });
 
 
+
+app.get("/health", (req, res) => res.json({
+  status: "ok", service: "MK Monitor",
+  followedProjects: followedProjects.length,
+}));
+
+app.get("/run", async (req, res) => {
+  console.log("🔧 手動実行トリガー (web)");
+  res.json({ status: "started", message: "Monitor started. Check logs." });
+  runMonitor().catch(console.error);
+});
 
 function startWebServer() {
   const PORT = process.env.PORT || 3000;
