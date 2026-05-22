@@ -308,55 +308,77 @@ async function safeFetch(url, options={}, source="") {
 // ─── BOAMP（data.gouv.fr経由） ─────────────────────────────────────────────────
 
 async function fetchBOAMP() {
-  console.log("📡 BOAMP (data.gouv.fr)...");
-  try {
-    // BOAMP via data.gouv.fr - dataset des marchés publics
-    const url = "https://www.data.gouv.fr/api/1/datasets/5cd57bf68b4c4179299eb0e9/resources/";
-    const res = await safeFetch(url, {}, "BOAMP-gouv");
-    if (res) {
-      const data = await res.json();
-      // データセットのリソースURLを取得して最新データにアクセス
-      const resources = data.data||data.results||[];
-      const csvResource = resources.find(r => r.format==="csv"||r.url?.includes(".csv"));
-      if (csvResource && csvResource.url) {
-        console.log(`  ✅ BOAMP dataset found`);
-      }
-    }
-  } catch(e) {}
+  console.log("📡 BOAMP...");
 
-  // フォールバック: api.boamp.fr 直接アクセス試行
-  try {
-    const kwFilter = ["musée","théâtre","bibliothèque","école","hôtel","gare"]
-      .map(k=>`objet like "%${k}%"`).join(" OR ");
-    const url = `https://api.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records?where=${encodeURIComponent(kwFilter)}&order_by=date_publication%20DESC&limit=50`;
-    const res = await safeFetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; MKMonitor/1.0)",
-        "Accept": "application/json",
-        "Referer": "https://www.boamp.fr",
+  const kwFilter = ["musée","théâtre","bibliothèque","école","hôtel","gare","bureau","campus","auditorium","conservatoire","médiathèque"]
+    .map(k=>`objet like "%${k}%"`).join(" OR ");
+  const encoded = encodeURIComponent(kwFilter);
+
+  // 複数のBOAMPエンドポイントを順番に試行
+  const endpoints = [
+    // 旧OpenDataSoftドメイン（Railwayからアクセス可能な可能性が高い）
+    `https://boamp-datadila.opendatasoft.com/api/explore/v2.1/catalog/datasets/boamp/records?where=${encoded}&order_by=date_publication%20DESC&limit=60`,
+    // data.gouv.fr タブular API
+    `https://tabular-api.data.gouv.fr/api/resources/5cd57bf6-8b4c-4179-299e-b0e900000000/data/?page=1&page_size=50`,
+    // 直接API（失敗していたもの - 念のため再試行）
+    `https://api.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records?where=${encoded}&order_by=date_publication%20DESC&limit=60`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json",
+          "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+          "Referer": "https://www.boamp.fr/",
+          "Origin": "https://www.boamp.fr",
+        },
+        timeout: 15000,
+      });
+
+      if (!res.ok) {
+        console.error(`  ⚠️ BOAMP ${res.status} (${url.split("/")[2]})`);
+        continue;
       }
-    }, "BOAMP");
-    if (res) {
+
       const data = await res.json();
-      const results = (data.results||[]).map(r=>{
-        const f=r.record?.fields||r.fields||r;
-        if (!f.objet||f.objet.trim().length<3) return null;
+      const rows = data.results||data.data||data.records||[];
+
+      if (rows.length === 0) {
+        console.log(`  ⚠️ BOAMP 0件 (${url.split("/")[2]})`);
+        continue;
+      }
+
+      const results = rows.map(r => {
+        const f = r.record?.fields || r.fields || r;
+        if (!f.objet || f.objet.trim().length < 3) return null;
         return {
-          _id:`boamp-${f.id||Math.random()}`, _source:"BOAMP",
-          title:f.objet, description:cleanText(f.description||""),
-          acheteur:f.acheteur_denomination||f.pouvoir_adjudicateur,
-          budget:f.valeur_totale||f.valeur_estimee,
-          date_pub:f.date_publication, deadline:f.date_limite_reception,
-          region:f.region||"France", country:"France",
-          cpv:f.code_cpv, procedure:f.procedure, nature:f.nature,
-          url:f.url_document||"https://www.boamp.fr",
+          _id:`boamp-${f.id||f.idweb||Math.random()}`, _source:"BOAMP",
+          title: cleanText(f.objet),
+          description: cleanText(f.descripteur_libelle||f.description||""),
+          acheteur: f.acheteur_denomination||f.denominationacheteur||f.pouvoir_adjudicateur||"",
+          budget: f.valeur_totale||f.valeur_estimee||f.montant||null,
+          date_pub: f.date_publication||f.dateparution,
+          deadline: f.date_limite_reception||f.datelimitereponse,
+          region: f.region||f.departement||"France",
+          country: "France",
+          cpv: f.code_cpv||f.cpv,
+          procedure: f.procedure,
+          nature: f.nature||f.typemarche,
+          url: f.url_document||f.urlboamp||`https://www.boamp.fr`,
         };
       }).filter(Boolean);
-      console.log(`  ✅ BOAMP: ${results.length}件`);
-      return results;
-    }
-  } catch(e) { console.error("⚠️ BOAMP:", e.message); }
 
+      console.log(`  ✅ BOAMP: ${results.length}件 (${url.split("/")[2]})`);
+      return results;
+
+    } catch(e) {
+      console.error(`  ⚠️ BOAMP error (${url.split("/")[2]}): ${e.message}`);
+    }
+  }
+
+  console.error("  ❌ BOAMP: 全エンドポイント失敗");
   return [];
 }
 
