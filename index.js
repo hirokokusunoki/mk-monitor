@@ -138,7 +138,31 @@ function detectBuildingType(notice) {
   return null;
 }
 
-// ─── 地域 ──────────────────────────────────────────────────────────────────────
+// ─── 排他性条項（Exclusivité）検出 ────────────────────────────────────────────
+
+const EXCLUSIVITY_KW = [
+  // フランス語
+  "exclusivité","exclusif","exclusive","clause d'exclusivité",
+  "engagement d'exclusivité","ne peut participer qu'à",
+  "ne peut être membre que d'un","ne peut figurer que dans un",
+  "un même prestataire ne peut","un même bureau ne peut",
+  "un même co-traitant ne peut","chaque sous-traitant ne peut",
+  "chaque co-traitant ne peut","chaque bureau d'études ne peut",
+  "un seul groupement","ne peut appartenir qu'à",
+  "interdit de participer à plusieurs","candidater à plusieurs",
+  "membre de plusieurs candidatures","plusieurs équipes",
+  // 英語
+  "exclusivity clause","exclusive participation",
+  "cannot participate in more than one","one team only",
+  "single team participation",
+];
+
+function hasExclusivity(notice) {
+  const text = [notice.title, notice.description].filter(Boolean).join(" ").toLowerCase();
+  return EXCLUSIVITY_KW.some(k => text.includes(k.toLowerCase()));
+}
+
+
 
 const GEO = {
   1:  { ja:"🇫🇷 フランス",       fr:"🇫🇷 France",             en:"🇫🇷 France",            order:1, keywords:["france","french"] },
@@ -184,6 +208,7 @@ function scoreNotice(notice) {
   const budget = parseBudget(notice.budget);
   const geo    = detectGeo(notice);
   const bType  = detectBuildingType(notice);
+  const isExcl = hasExclusivity(notice);
 
   // キーワードマッチ
   ALL_KEYWORDS.forEach(k=>{if(text.includes(k.toLowerCase()))score+=6});
@@ -560,6 +585,7 @@ Return this exact structure (translate values to each language, use "不明"/"N/
     "建築面積": "",
     "建築タイプ": "新築／増築／改修／不明",
     "コンペの有無": "あり／なし／不明",
+    "Exclusivity": "あり（パートナーの早期確保が必要）／なし／不明",
     "審査基準": "",
     "審査員": "",
     "提出物": "",
@@ -575,6 +601,7 @@ Return this exact structure (translate values to each language, use "不明"/"N/
     "Surface": "",
     "Type de projet": "Neuf/Extension/Réhabilitation/N/A",
     "Concours": "Oui/Non/N/A",
+    "Exclusivity": "Oui (sécuriser les partenaires rapidement)/Non/N/A",
     "Critères de sélection": "",
     "Jury": "",
     "Pièces à fournir": "",
@@ -590,6 +617,7 @@ Return this exact structure (translate values to each language, use "不明"/"N/
     "Area": "",
     "Project type": "New build/Extension/Renovation/N/A",
     "Competition": "Yes/No/N/A",
+    "Exclusivity": "Yes (secure partners quickly)/No/N/A",
     "Selection criteria": "",
     "Jury": "",
     "Deliverables": "",
@@ -642,7 +670,13 @@ function buildNoticeHtml(notice, lang) {
   const bType = detectBuildingType(notice);
   const bTypeCfg = bType ? BUILDING_TYPES[bType] : null;
   const isComp = notice.procedure==="Competition"||notice.nature==="Competition";
-  const deadline = notice.deadline ? new Date(notice.deadline).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"}) : null;
+  const isExcl = hasExclusivity(notice);
+  const pubDateStr = notice.date_pub
+    ? new Date(notice.date_pub).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})
+    : null;
+  const deadlineStr = notice.deadline
+    ? new Date(notice.deadline).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})
+    : null;
   const srcColor = SOURCE_COLORS[notice._source]||{bg:"#f1f5f9",fg:"#475569"};
 
   let summaryHtml = "";
@@ -652,10 +686,10 @@ function buildNoticeHtml(notice, lang) {
     const s = notice._summary[langKey] || notice._summary.en || notice._summary;
 
     const fields = lang==="ja"
-      ? ["総工費","建築面積","建築タイプ","コンペの有無","審査基準","審査員","提出物","スケジュール","敷地の特徴","設計チーム構成","参加報酬"]
+      ? ["総工費","建築面積","建築タイプ","コンペの有無","Exclusivity","審査基準","審査員","提出物","スケジュール","敷地の特徴","設計チーム構成","参加報酬"]
       : lang==="fr"
-      ? ["Coût total","Surface","Type de projet","Concours","Critères de sélection","Jury","Pièces à fournir","Calendrier","Caractéristiques du site","Équipe requise","Indemnité de concours"]
-      : ["Total cost","Area","Project type","Competition","Selection criteria","Jury","Deliverables","Schedule","Site characteristics","Team required","Competition fee"];
+      ? ["Coût total","Surface","Type de projet","Concours","Exclusivity","Critères de sélection","Jury","Pièces à fournir","Calendrier","Caractéristiques du site","Équipe requise","Indemnité de concours"]
+      : ["Total cost","Area","Project type","Competition","Exclusivity","Selection criteria","Jury","Deliverables","Schedule","Site characteristics","Team required","Competition fee"];
 
     const rows = fields.filter(k=>s[k]&&s[k]!=="不明"&&s[k]!=="N/A"&&s[k]!=="")
       .map(k=>`<tr><td style="padding:3px 10px 3px 0;font-size:11px;color:#6b7280;white-space:nowrap;vertical-align:top">${k}</td><td style="padding:3px 0;font-size:11px;color:#374151;line-height:1.5">${s[k]}</td></tr>`).join("");
@@ -677,13 +711,18 @@ function buildNoticeHtml(notice, lang) {
   }
 
   return `
-  <div style="border:1px solid #e2e8f0;border-radius:4px;margin-bottom:10px;overflow:hidden">
+  <div style="border:1px solid ${isExcl?"#fca5a5":"#e2e8f0"};border-radius:4px;margin-bottom:10px;overflow:hidden">
+    ${isExcl ? `<div style="background:#dc2626;padding:8px 16px;display:flex;align-items:center;gap:8px">
+      <span style="font-size:13px">⚡</span>
+      <span style="font-size:10px;font-weight:700;color:white;letter-spacing:0.12em;text-transform:uppercase">Exclusivity clause detected — Act fast to secure your partners</span>
+    </div>` : ""}
     <div style="padding:14px 16px">
       <div style="margin-bottom:8px;display:flex;gap:5px;flex-wrap:wrap">
         <span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;background:${srcColor.bg};color:${srcColor.fg};letter-spacing:0.1em;text-transform:uppercase">${notice._source}</span>
         <span style="font-size:9px;padding:2px 7px;border-radius:3px;background:#f1f5f9;color:#475569">${geoLabel}</span>
         ${bTypeCfg?`<span style="font-size:9px;font-weight:600;padding:2px 7px;border-radius:3px;background:${bTypeCfg.bg};color:${bTypeCfg.color}">${bTypeCfg.label[lang==="bilingual"?"en":lang]||bTypeCfg.label.en}</span>`:""}
         ${isComp?`<span style="font-size:9px;font-weight:600;padding:2px 7px;border-radius:3px;background:#fdf4ff;color:#6b21a8">${lang==="ja"?"コンペ":lang==="fr"?"CONCOURS":"COMPETITION"}</span>`:""}
+        ${isExcl?`<span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;background:#fee2e2;color:#dc2626;letter-spacing:0.05em">⚡ EXCLUSIVITY</span>`:""}
         ${parseBudget(notice.budget)>=5000000?`<span style="font-size:9px;padding:2px 7px;border-radius:3px;background:#ede9fe;color:#6d28d9">+5M€</span>`:""}
       </div>
       <table width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -696,11 +735,16 @@ function buildNoticeHtml(notice, lang) {
           <div style="font-size:15px;font-weight:600;color:#111827;font-family:monospace">${budget}</div>
         </td>
       </tr></table>
-      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #f3f4f6;font-size:10px;color:#9ca3af">
-        ${notice.region?`📍 ${notice.region}&nbsp;&nbsp;`:""}
-        ${deadline?`<span style="color:#dc2626">⏱ ${deadline}</span>&nbsp;&nbsp;`:""}
-        <a href="${notice.url}" style="color:#2563eb;text-decoration:none">→ Dossier ↗</a>
-        ${buildFollowUrl(notice) ? `&nbsp;&nbsp;<a href="${buildFollowUrl(notice)}" style="color:#059669;text-decoration:none;font-weight:600">🔔 Follow this project</a>` : ""}
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #f3f4f6;font-size:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          ${notice.region?`<span style="color:#9ca3af">📍 ${escapeHtml(notice.region)}</span>`:""}
+          ${pubDateStr?`<span style="color:#9ca3af">Published: ${pubDateStr}</span>`:""}
+          ${deadlineStr?`<span style="font-weight:600;color:#dc2626">⏱ Deadline: ${deadlineStr}</span>`:""}
+        </div>
+        <div style="display:flex;gap:10px">
+          <a href="${notice.url}" style="color:#2563eb;text-decoration:none">→ View dossier ↗</a>
+          ${buildFollowUrl(notice) ? `<a href="${buildFollowUrl(notice)}" style="color:#059669;text-decoration:none;font-weight:600">🔔 Follow this project</a>` : ""}
+        </div>
       </div>
     </div>
     ${summaryHtml}
@@ -859,11 +903,22 @@ function buildFollowUrl(notice) {
   return `${SERVICE_URL}/follow?d=${encoded}`;
 }
 
-// ─── フォロー通知メール ────────────────────────────────────────────────────────
+// ─── フォロー済みプロジェクト（メモリ内ストレージ） ────────────────────────────
+
+const followedProjects = [];
 
 async function sendFollowNotification(noticeData, assignedTo, assignedEmail) {
+  // フォロー済みリストに追加
+  followedProjects.push({
+    id:         Date.now(),
+    followedAt: new Date().toISOString(),
+    assignedTo,
+    assignedEmail,
+    ...noticeData,
+  });
+
   const teamMembers = RECIPIENTS.filter(r => r.email);
-  const toList = teamMembers.map(r => r.email);
+  const toList = teamMembers.map(r => r.email).filter(Boolean);
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f8fafc;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif">
@@ -871,43 +926,27 @@ async function sendFollowNotification(noticeData, assignedTo, assignedEmail) {
   <div style="background:#0f172a;border-radius:6px 6px 0 0;padding:20px 28px">
     <div style="font-size:9px;color:#475569;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:5px">Moreau Kusunoki Architectes</div>
     <h1 style="margin:0;font-size:18px;font-weight:300;color:#f1f5f9;letter-spacing:0.1em;text-transform:uppercase">
-      🔔 Nouveau projet en suivi
+      🔔 Project added to follow-up
     </h1>
   </div>
   <div style="background:white;border-radius:0 0 6px 6px;padding:24px 28px;border:1px solid #e2e8f0;border-top:none">
-    <div style="padding:16px;background:#f0f9ff;border-left:4px solid #0284c7;margin-bottom:20px">
-      <div style="font-size:12px;color:#0369a1;font-weight:600;margin-bottom:4px">RESPONSABLE DÉSIGNÉ</div>
+    <div style="padding:14px 16px;background:#f0f9ff;border-left:4px solid #0284c7;margin-bottom:20px;border-radius:3px">
+      <div style="font-size:10px;color:#0369a1;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px">ASSIGNED TO</div>
       <div style="font-size:18px;font-weight:600;color:#0c4a6e">${assignedTo}</div>
     </div>
     <table style="width:100%;border-collapse:collapse;font-size:12px">
-      <tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap;vertical-align:top">Projet</td>
-        <td style="padding:8px 0;color:#111827;font-weight:500">${noticeData.title}</td>
-      </tr>
-      <tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Source</td>
-        <td style="padding:8px 0;color:#111827">${noticeData.source}</td>
-      </tr>
-      <tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Maître d'ouvrage</td>
-        <td style="padding:8px 0;color:#111827">${noticeData.acheteur||"—"}</td>
-      </tr>
-      <tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Budget</td>
-        <td style="padding:8px 0;color:#111827">${noticeData.budget}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Pays</td>
-        <td style="padding:8px 0;color:#111827">${noticeData.country||"—"}</td>
-      </tr>
+      <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Project</td><td style="padding:8px 0;color:#111827;font-weight:500">${noticeData.title}</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Source</td><td style="padding:8px 0;color:#111827">${noticeData.source}</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Client</td><td style="padding:8px 0;color:#111827">${noticeData.acheteur||"—"}</td></tr>
+      <tr style="border-bottom:1px solid #f1f5f9"><td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Budget</td><td style="padding:8px 0;color:#111827">${noticeData.budget}</td></tr>
+      <tr><td style="padding:8px 12px 8px 0;color:#6b7280;white-space:nowrap">Country</td><td style="padding:8px 0;color:#111827">${noticeData.country||"—"}</td></tr>
     </table>
-    <div style="margin-top:20px">
-      <a href="${noticeData.url}" style="display:inline-block;padding:10px 20px;background:#0f172a;color:white;text-decoration:none;font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;border-radius:3px">
-        → Accéder au dossier complet ↗
-      </a>
+    <div style="margin-top:20px;display:flex;gap:10px">
+      <a href="${noticeData.url}" style="display:inline-block;padding:10px 20px;background:#0f172a;color:white;text-decoration:none;font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;border-radius:3px">→ View dossier ↗</a>
+      ${process.env.SERVICE_URL ? `<a href="${process.env.SERVICE_URL}/dashboard" style="display:inline-block;padding:10px 20px;background:#f1f5f9;color:#0f172a;text-decoration:none;font-size:11px;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;border-radius:3px">→ View all followed projects</a>` : ""}
     </div>
     <div style="margin-top:20px;padding-top:16px;border-top:1px solid #f1f5f9;font-size:10px;color:#94a3b8">
-      Moreau Kusunoki Architectes — MK Monitor · Suivi de projet automatique
+      Moreau Kusunoki Architectes — MK Monitor · Project follow-up
     </div>
   </div>
 </div>
@@ -916,12 +955,12 @@ async function sendFollowNotification(noticeData, assignedTo, assignedEmail) {
   const { error } = await resend.emails.send({
     from:    CONFIG.senderEmail,
     to:      toList,
-    subject: `[MK Monitor] Nouveau suivi : ${noticeData.title.slice(0,60)}${noticeData.title.length>60?"…":""}`,
+    subject: `[MK Monitor] New follow-up: ${noticeData.title.slice(0,60)}${noticeData.title.length>60?"…":""}`,
     html,
   });
 
-  if (error) console.error("フォロー通知エラー:", error);
-  else       console.log(`✅ フォロー通知送信完了 → ${toList.join(", ")}`);
+  if (error) console.error("Follow notification error:", error);
+  else       console.log(`✅ Follow notification sent → ${toList.join(", ")}`);
 }
 
 // ─── Webサーバー（フォローページ） ────────────────────────────────────────────
@@ -1059,7 +1098,73 @@ app.post("/follow/confirm", async (req, res) => {
   }
 });
 
-app.get("/health", (req, res) => res.json({ status:"ok", service:"MK Monitor" }));
+app.get("/dashboard", (req, res) => {
+  const rows = followedProjects.length === 0
+    ? `<div style="text-align:center;padding:60px 0;color:#9ca3af;font-size:13px">No projects followed yet.</div>`
+    : followedProjects.slice().reverse().map(p => {
+        const date = new Date(p.followedAt).toLocaleDateString("en-GB", {day:"numeric",month:"short",year:"numeric"});
+        return `
+        <div style="border:1px solid #e5e7eb;border-radius:4px;padding:16px 20px;margin-bottom:8px;background:white">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                <span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;background:#dbeafe;color:#1d4ed8;letter-spacing:0.1em;text-transform:uppercase">${escapeHtml(p.source)}</span>
+                <span style="font-size:9px;padding:2px 7px;border-radius:3px;background:#d1fae5;color:#065f46">${escapeHtml(p.country||"")}</span>
+              </div>
+              <div style="font-size:14px;font-weight:500;color:#111827;line-height:1.4;margin-bottom:4px">${escapeHtml(p.title)}</div>
+              <div style="font-size:11px;color:#9ca3af">${escapeHtml(p.acheteur||"")}</div>
+            </div>
+            <div style="text-align:right;flex-shrink:0">
+              <div style="font-size:13px;font-weight:600;color:#111827;font-family:monospace">${escapeHtml(p.budget)}</div>
+              <div style="font-size:10px;color:#9ca3af;margin-top:2px">Added ${date}</div>
+            </div>
+          </div>
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid #f3f4f6;display:flex;justify-content:space-between;align-items:center">
+            <div style="font-size:11px">
+              <span style="color:#6b7280">Assigned to:</span>
+              <span style="font-weight:600;color:#0284c7;margin-left:6px">${escapeHtml(p.assignedTo)}</span>
+            </div>
+            <a href="${escapeHtml(p.url)}" target="_blank" style="font-size:11px;color:#2563eb;text-decoration:none">→ View dossier ↗</a>
+          </div>
+        </div>`;
+      }).join("");
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MK Monitor — Followed Projects</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Helvetica Neue',Helvetica,Arial,sans-serif; background:#f0efed; min-height:100vh; }
+  .header { background:#0f172a; padding:20px 32px; }
+  .header-sub { font-size:9px; color:#475569; letter-spacing:0.2em; text-transform:uppercase; margin-bottom:6px; }
+  .header-title { font-size:18px; font-weight:300; color:#f1f5f9; letter-spacing:0.15em; text-transform:uppercase; }
+  .header-count { font-size:11px; color:#64748b; margin-top:4px; }
+  .content { max-width:800px; margin:0 auto; padding:24px 32px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div style="max-width:800px;margin:0 auto">
+      <div class="header-sub">Moreau Kusunoki Architectes — MK Monitor</div>
+      <div class="header-title">🔔 Followed Projects</div>
+      <div class="header-count">${followedProjects.length} project${followedProjects.length!==1?"s":""} in follow-up</div>
+    </div>
+  </div>
+  <div class="content">
+    ${rows}
+    <div style="margin-top:24px;font-size:10px;color:#9ca3af;text-align:center;line-height:1.7">
+      Note: This list resets when the server restarts.<br>
+      Each follow-up triggers an email notification to the full team.
+    </div>
+  </div>
+</body>
+</html>`);
+});
+
+
 
 function startWebServer() {
   const PORT = process.env.PORT || 3000;
