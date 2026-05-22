@@ -23,7 +23,7 @@ const CONFIG = {
   senderEmail:   process.env.SENDER_EMAIL || "onboarding@resend.dev",
   anthropicKey:  process.env.ANTHROPIC_API_KEY,
   timezone:      "Europe/Paris",
-  schedule:      "07 * * *",
+  schedule:      "0 7 * * *",
   priorityScore: parseInt(process.env.PRIORITY_SCORE || "15"),
 };
 
@@ -310,86 +310,101 @@ async function safeFetch(url, options={}, source="") {
 async function fetchBOAMP() {
   console.log("📡 BOAMP (data.gouv.fr)...");
   try {
-    // data.gouv.frの公開データセット経由（Railway対応）
-    const kwQuery = ["musée","théâtre","bibliothèque","école","hôtel","gare","bureau"]
-      .map(k=>`objet like "%25${encodeURIComponent(k)}%25"`).join(" OR ");
-    const url = `https://tabular-api.data.gouv.fr/api/resources/7cab7b7e-c6a4-4e96-8265-5c1e0c22c5e6/data/?page=1&page_size=50`;
+    // BOAMP via data.gouv.fr - dataset des marchés publics
+    const url = "https://www.data.gouv.fr/api/1/datasets/5cd57bf68b4c4179299eb0e9/resources/";
     const res = await safeFetch(url, {}, "BOAMP-gouv");
     if (res) {
       const data = await res.json();
-      const rows = data.data||data.results||[];
-      const results = rows.filter(r => {
-        const text = [r.objet,r.description].filter(Boolean).join(" ").toLowerCase();
-        return ALL_KEYWORDS.some(k=>text.includes(k.toLowerCase())) ||
-               ALL_FETCH_CPV.some(c=>String(r.code_cpv||"").startsWith(c.slice(0,5)));
-      }).map(r=>({
-        _id:`boamp-${r.id||Math.random()}`, _source:"BOAMP",
-        title:r.objet, description:r.description,
-        acheteur:r.acheteur_denomination||r.pouvoir_adjudicateur,
-        budget:r.valeur_totale||r.valeur_estimee,
-        date_pub:r.date_publication, deadline:r.date_limite_reception,
-        region:r.region||"France", country:"France",
-        cpv:r.code_cpv, procedure:r.procedure, nature:r.nature,
-        url:r.url_document||"https://www.boamp.fr",
-      }));
+      // データセットのリソースURLを取得して最新データにアクセス
+      const resources = data.data||data.results||[];
+      const csvResource = resources.find(r => r.format==="csv"||r.url?.includes(".csv"));
+      if (csvResource && csvResource.url) {
+        console.log(`  ✅ BOAMP dataset found`);
+      }
+    }
+  } catch(e) {}
+
+  // フォールバック: api.boamp.fr 直接アクセス試行
+  try {
+    const kwFilter = ["musée","théâtre","bibliothèque","école","hôtel","gare"]
+      .map(k=>`objet like "%${k}%"`).join(" OR ");
+    const url = `https://api.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records?where=${encodeURIComponent(kwFilter)}&order_by=date_publication%20DESC&limit=50`;
+    const res = await safeFetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; MKMonitor/1.0)",
+        "Accept": "application/json",
+        "Referer": "https://www.boamp.fr",
+      }
+    }, "BOAMP");
+    if (res) {
+      const data = await res.json();
+      const results = (data.results||[]).map(r=>{
+        const f=r.record?.fields||r.fields||r;
+        if (!f.objet||f.objet.trim().length<3) return null;
+        return {
+          _id:`boamp-${f.id||Math.random()}`, _source:"BOAMP",
+          title:f.objet, description:cleanText(f.description||""),
+          acheteur:f.acheteur_denomination||f.pouvoir_adjudicateur,
+          budget:f.valeur_totale||f.valeur_estimee,
+          date_pub:f.date_publication, deadline:f.date_limite_reception,
+          region:f.region||"France", country:"France",
+          cpv:f.code_cpv, procedure:f.procedure, nature:f.nature,
+          url:f.url_document||"https://www.boamp.fr",
+        };
+      }).filter(Boolean);
       console.log(`  ✅ BOAMP: ${results.length}件`);
       return results;
     }
   } catch(e) { console.error("⚠️ BOAMP:", e.message); }
+
   return [];
 }
 
 // ─── TED API ヘルパー（POST） ─────────────────────────────────────────────────
 
-async function tedSearch(query, extraFilters={}, limit=30) {
+async function tedSearch(query, limit=30) {
   const body = {
     query,
     fields: ["title","description","organisation-name","value-pub","cpv-code",
              "publication-date","deadline-date","country","procedure-type","notice-type","link"],
-    page: 1, limit,
-    sort: { field:"publication-date", order:"desc" },
-    ...extraFilters,
+    page: 1,
+    limit,
+    sortField: "publicationDate",
+    sortOrder: "DESC",
   };
-  return safeFetch("https://api.ted.europa.eu/v3/notices/search", {
-    method: "POST",
-    headers: { "Content-Type":"application/json", "Accept":"application/json" },
-    body: JSON.stringify(body),
-  }, "TED");
+  try {
+    const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "Accept":"application/json",
+                 "User-Agent":"Mozilla/5.0 (compatible; MKMonitor/1.0)" },
+      body: JSON.stringify(body),
+      timeout: 15000,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(()=>"");
+      console.error(`⚠️ TED HTTP ${res.status}: ${errText.slice(0,300)}`);
+      return null;
+    }
+    return res;
+  } catch(e) {
+    console.error(`⚠️ TED error: ${e.message}`);
+    return null;
+  }
 }
-
-function mapTEDNotice(n, source="TED/OJEU", countryOverride=null) {
-  const title = Array.isArray(n.title)?n.title.find(t=>t&&t.length>3)||n.title[0]:n.title;
-  const desc  = Array.isArray(n.description)?n.description.find(d=>d&&d.length>3)||n.description[0]:n.description;
-  const org   = Array.isArray(n["organisation-name"])?n["organisation-name"][0]:n["organisation-name"];
-  const cpv   = Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"];
-  if (!title||String(title).trim().length<3) return null;
-  return {
-    _id:`${source.toLowerCase().replace(/\W/g,"-")}-${n.id||Math.random()}`,
-    _source: source,
-    title:cleanText(title), description:cleanText(desc||""),
-    acheteur:cleanText(org||""),
-    budget:n["value-pub"]||n["estimated-value"],
-    date_pub:n["publication-date"]||n.publicationDate,
-    deadline:n["deadline-date"]||n.submissionDeadline,
-    country:countryOverride||n.country||n.buyerCountry,
-    region:countryOverride||n.country,
-    cpv:Array.isArray(cpv)?cpv[0]:cpv,
-    procedure:n["procedure-type"], nature:n["notice-type"],
-    url:n.link||"https://ted.europa.eu",
-  };
-}
-
-// ─── TED/OJEU ─────────────────────────────────────────────────────────────────
 
 async function fetchTED() {
   console.log("📡 TED/OJEU...");
   const allResults = [];
-  const cpvGroups = [
-    [...ARCH_CPV.slice(0,4)],
-    ["45214000","45213000","45211100","55100000"],
+
+  // フォーマット1: query + sortField/sortOrder
+  const searches = [
+    "architect museum library theatre concert hall cultural",
+    "school university campus education hospital hotel airport station",
+    "musée bibliothèque théâtre école université hôtel gare aéroport",
   ];
-  for (const cpvs of cpvGroups) {
-    const res = await tedSearch(cpvs.map(c=>`cpv:${c}`).join(" OR "), {}, 30);
+
+  for (const q of searches) {
+    const res = await tedSearch(q, 25);
     if (!res) continue;
     try {
       const data = await res.json();
@@ -398,35 +413,75 @@ async function fetchTED() {
       allResults.push(...items);
     } catch(e) { console.error("TED parse:", e.message); }
   }
+
+  // フォーマット1が全て失敗した場合、フォーマット2を試みる
+  if (allResults.length === 0) {
+    console.log("  TED: フォーマット2を試行中...");
+    try {
+      const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Accept":"application/json" },
+        body: JSON.stringify({
+          q: "architect museum cultural school hotel",
+          pageSize: 30,
+          pageNum: 1,
+        }),
+        timeout: 15000,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const notices = data.notices||data.results||data.items||[];
+        const items = notices.map(n=>mapTEDNotice(n,"TED/OJEU")).filter(Boolean);
+        allResults.push(...items);
+        console.log(`  ✅ TED (format2): ${items.length}件`);
+      } else {
+        const errText = await res.text().catch(()=>"");
+        console.error(`  ⚠️ TED format2 ${res.status}: ${errText.slice(0,200)}`);
+      }
+    } catch(e) { console.error("TED format2:", e.message); }
+  }
+
   const unique = allResults.filter((n,i,arr)=>arr.findIndex(x=>x._id===n._id)===i);
   console.log(`  ✅ TED: ${unique.length}件`);
   return unique;
 }
 
-// ─── SIMAP（スイス：TED POST経由） ────────────────────────────────────────────
+// ─── SIMAP（スイス：TED経由） ─────────────────────────────────────────────────
 
 async function fetchSIMAP() {
   console.log("📡 SIMAP (Switzerland)...");
-  const query = [...ARCH_CPV.slice(0,3),"45214000","55100000"].map(c=>`cpv:${c}`).join(" OR ");
-  const res = await tedSearch(`(${query}) AND (country:CH)`, {}, 20);
+  const res = await tedSearch("architect museum library school hotel Switzerland", 20);
   if (!res) return [];
-  const data = await res.json();
-  const items = (data.notices||[]).map(n=>mapTEDNotice(n,"SIMAP","Switzerland")).filter(Boolean);
-  console.log(`  ✅ SIMAP: ${items.length}件`);
-  return items;
+  try {
+    const data = await res.json();
+    const items = (data.notices||[])
+      .filter(n => {
+        const country = n.country||"";
+        return Array.isArray(country) ? country.includes("CH") : country==="CH";
+      })
+      .map(n=>mapTEDNotice(n,"SIMAP","Switzerland")).filter(Boolean);
+    console.log(`  ✅ SIMAP: ${items.length}件`);
+    return items;
+  } catch(e) { return []; }
 }
 
-// ─── Doffin（ノルウェー：TED POST経由） ───────────────────────────────────────
+// ─── Doffin（ノルウェー：TED経由） ───────────────────────────────────────────
 
 async function fetchDoffin() {
   console.log("📡 Doffin (Norway)...");
-  const query = [...ARCH_CPV.slice(0,3),"45214000","55100000"].map(c=>`cpv:${c}`).join(" OR ");
-  const res = await tedSearch(`(${query}) AND (country:NO)`, {}, 20);
+  const res = await tedSearch("architect museum library school hotel Norway Norge", 20);
   if (!res) return [];
-  const data = await res.json();
-  const items = (data.notices||[]).map(n=>mapTEDNotice(n,"Doffin","Norway")).filter(Boolean);
-  console.log(`  ✅ Doffin: ${items.length}件`);
-  return items;
+  try {
+    const data = await res.json();
+    const items = (data.notices||[])
+      .filter(n => {
+        const country = n.country||"";
+        return Array.isArray(country) ? country.includes("NO") : country==="NO";
+      })
+      .map(n=>mapTEDNotice(n,"Doffin","Norway")).filter(Boolean);
+    console.log(`  ✅ Doffin: ${items.length}件`);
+    return items;
+  } catch(e) { return []; }
 }
 
 // ─── Bustler ──────────────────────────────────────────────────────────────────
@@ -512,17 +567,26 @@ async function fetchJapan() {
     allResults.push(...items);
   }
 
-  const mlitRes = await safeFetch("https://www.mlit.go.jp/rss/report/press/kanbo.xml",{},"MLIT");
-  if (mlitRes) {
+  // 国土交通省（複数URLを試行）
+  const mlitUrls = [
+    "https://www.mlit.go.jp/rss/report/press/kanbo.xml",
+    "https://www.mlit.go.jp/rss/report/press/all.xml",
+    "https://www.mlit.go.jp/common/rss/press.xml",
+  ];
+  const kw = ["設計競技","コンペ","プロポーザル","設計者選定","建築設計","公共施設","文化施設","学校","庁舎","駅","空港"];
+  for (const mlitUrl of mlitUrls) {
+    const mlitRes = await safeFetch(mlitUrl,{},"MLIT");
+    if (!mlitRes) continue;
     const xml = await mlitRes.text();
-    const kw = ["設計競技","コンペ","プロポーザル","設計者選定","建築設計","公共施設","文化施設","学校","庁舎","駅","空港"];
     const items = parseRSS(xml,"MLIT",(get)=>{
-      const title = get("title"); const desc = get("description").replace(/<[^>]*>/g,"");
+      const title = get("title"); const desc = cleanText(get("description"),400);
       if (!kw.some(k=>title.includes(k)||desc.includes(k))) return null;
-      return { _id:`mlit-${Math.random()}`, title, description:desc.slice(0,400), acheteur:"国土交通省", budget:null, date_pub:get("pubDate"), deadline:null, country:"Japan", region:"Japan", cpv:"71200000", procedure:"Competition", nature:"Competition", url:get("link")||"https://www.mlit.go.jp" };
+      const extractedDeadline = extractDeadlineFromText(desc);
+      return { _id:`mlit-${Math.random()}`, title, description:desc, acheteur:"国土交通省", budget:null, date_pub:get("pubDate"), deadline:extractedDeadline, country:"Japan", region:"Japan", cpv:"71200000", procedure:"Competition", nature:"Competition", url:get("link")||"https://www.mlit.go.jp" };
     }).filter(Boolean);
     console.log(`  ✅ MLIT: ${items.length}件`);
     allResults.push(...items);
+    break;
   }
 
   return allResults;
@@ -566,12 +630,14 @@ async function fetchMiddleEast() {
   }
 
   // Gulf TED（POST経由）
-  const gulfQuery = `cpv:71200000 AND (country:AE OR country:QA OR country:SA OR country:BH OR country:KW OR country:OM)`;
-  const gulfRes = await tedSearch(gulfQuery, {}, 15);
+  const gulfRes = await tedSearch("architect museum cultural hotel Saudi Arabia UAE Qatar Kuwait Bahrain Oman", 15);
   if (gulfRes) {
     try {
       const data = await gulfRes.json();
-      const items = (data.notices||[]).map(n=>mapTEDNotice(n,"Gulf Procurement")).filter(Boolean);
+      const gulfCountries = ["SA","AE","QA","BH","KW","OM"];
+      const items = (data.notices||[])
+        .filter(n => gulfCountries.some(c => String(n.country||"").includes(c)))
+        .map(n=>mapTEDNotice(n,"Gulf Procurement")).filter(Boolean);
       console.log(`  ✅ Gulf (TED): ${items.length}件`);
       allResults.push(...items);
     } catch(e) {}
@@ -1209,6 +1275,22 @@ function startWebServer() {
 
 
 
+function scheduleNextRun() {
+  const now = new Date();
+  const parisNow = new Date(now.toLocaleString("en-US", { timeZone:"Europe/Paris" }));
+  const next7am = new Date(parisNow);
+  next7am.setHours(7, 0, 0, 0);
+  if (next7am <= parisNow) next7am.setDate(next7am.getDate() + 1);
+  const msUntil = next7am - parisNow;
+  const minsUntil = Math.round(msUntil / 1000 / 60);
+  console.log(`⏰ 次回実行: パリ時間 ${next7am.toLocaleString("fr-FR")} (約${minsUntil}分後)`);
+  setTimeout(() => {
+    runMonitor()
+      .catch(console.error)
+      .finally(() => scheduleNextRun());
+  }, msUntil);
+}
+
 if (IS_TEST) {
   console.log("🧪 テストモード実行...");
   startWebServer();
@@ -1216,7 +1298,6 @@ if (IS_TEST) {
 } else {
   startWebServer();
   console.log("✅ MK Monitor 起動");
-  console.log(`⏰ スケジュール: 毎朝7時 (${CONFIG.timezone})`);
   RECIPIENTS.forEach(r=>r.email&&console.log(`   ${r.name}: ${r.email} [${r.lang}, ${r.filterLevel}]`));
-  cron.schedule(CONFIG.schedule,()=>runMonitor().catch(console.error),{timezone:CONFIG.timezone});
+  scheduleNextRun();
 }
