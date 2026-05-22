@@ -23,7 +23,7 @@ const CONFIG = {
   senderEmail:   process.env.SENDER_EMAIL || "onboarding@resend.dev",
   anthropicKey:  process.env.ANTHROPIC_API_KEY,
   timezone:      "Europe/Paris",
-  schedule:      " * * * * *",
+  schedule:      "0 7 * * *",
   priorityScore: parseInt(process.env.PRIORITY_SCORE || "15"),
 };
 
@@ -339,98 +339,92 @@ async function fetchBOAMP() {
   return [];
 }
 
-// ─── TED/OJEU（POST → GET に修正） ────────────────────────────────────────────
+// ─── TED API ヘルパー（POST） ─────────────────────────────────────────────────
+
+async function tedSearch(query, extraFilters={}, limit=30) {
+  const body = {
+    query,
+    fields: ["title","description","organisation-name","value-pub","cpv-code",
+             "publication-date","deadline-date","country","procedure-type","notice-type","link"],
+    page: 1, limit,
+    sort: { field:"publication-date", order:"desc" },
+    ...extraFilters,
+  };
+  return safeFetch("https://api.ted.europa.eu/v3/notices/search", {
+    method: "POST",
+    headers: { "Content-Type":"application/json", "Accept":"application/json" },
+    body: JSON.stringify(body),
+  }, "TED");
+}
+
+function mapTEDNotice(n, source="TED/OJEU", countryOverride=null) {
+  const title = Array.isArray(n.title)?n.title.find(t=>t&&t.length>3)||n.title[0]:n.title;
+  const desc  = Array.isArray(n.description)?n.description.find(d=>d&&d.length>3)||n.description[0]:n.description;
+  const org   = Array.isArray(n["organisation-name"])?n["organisation-name"][0]:n["organisation-name"];
+  const cpv   = Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"];
+  if (!title||String(title).trim().length<3) return null;
+  return {
+    _id:`${source.toLowerCase().replace(/\W/g,"-")}-${n.id||Math.random()}`,
+    _source: source,
+    title:cleanText(title), description:cleanText(desc||""),
+    acheteur:cleanText(org||""),
+    budget:n["value-pub"]||n["estimated-value"],
+    date_pub:n["publication-date"]||n.publicationDate,
+    deadline:n["deadline-date"]||n.submissionDeadline,
+    country:countryOverride||n.country||n.buyerCountry,
+    region:countryOverride||n.country,
+    cpv:Array.isArray(cpv)?cpv[0]:cpv,
+    procedure:n["procedure-type"], nature:n["notice-type"],
+    url:n.link||"https://ted.europa.eu",
+  };
+}
+
+// ─── TED/OJEU ─────────────────────────────────────────────────────────────────
 
 async function fetchTED() {
   console.log("📡 TED/OJEU...");
   const allResults = [];
-  // 複数CPVで検索（GETリクエスト）
   const cpvGroups = [
-    ARCH_CPV.slice(0,3),
-    ["45214000","45213000","45211100"],
-    ["92000000","55100000","34000000"],
+    [...ARCH_CPV.slice(0,4)],
+    ["45214000","45213000","45211100","55100000"],
   ];
   for (const cpvs of cpvGroups) {
-    const params = cpvs.map(c=>`cpvs=${c}`).join("&");
-    const url = `https://api.ted.europa.eu/v3/notices/search?${params}&limit=20&page=1&sortField=publicationDate&sortOrder=desc`;
-    const res = await safeFetch(url, {
-      method: "GET",
-      headers: { "Accept": "application/json" },
-    }, "TED");
+    const res = await tedSearch(cpvs.map(c=>`cpv:${c}`).join(" OR "), {}, 30);
     if (!res) continue;
     try {
       const data = await res.json();
       const notices = data.notices||data.results||data.items||[];
-      const items = notices.map(n=>{
-        const title = Array.isArray(n.title) ? n.title.find(t=>t&&t.length>3)||n.title[0] : n.title;
-        const desc  = Array.isArray(n.description) ? n.description.find(d=>d&&d.length>3)||n.description[0] : n.description;
-        const org   = Array.isArray(n["organisation-name"]) ? n["organisation-name"][0] : n["organisation-name"];
-        const cpv   = Array.isArray(n["cpv-code"]) ? n["cpv-code"][0] : n["cpv-code"];
-        if (!title || String(title).trim().length < 3) return null;
-        return {
-          _id:`ted-${n.id||Math.random()}`, _source:"TED/OJEU",
-          title: cleanText(title), description: cleanText(desc||""),
-          acheteur: cleanText(org||""),
-          budget:n["value-pub"]||n["estimated-value"],
-          date_pub:n["publication-date"]||n.publicationDate,
-          deadline:n["deadline-date"]||n.submissionDeadline,
-          country:n.country||n.buyerCountry, region:n.country,
-          cpv: Array.isArray(cpv) ? cpv[0] : cpv,
-          procedure:n["procedure-type"], nature:n["notice-type"],
-          url:n.link||"https://ted.europa.eu",
-        };
-      }).filter(Boolean);
+      const items = notices.map(n=>mapTEDNotice(n,"TED/OJEU")).filter(Boolean);
       allResults.push(...items);
-    } catch(e) {}
+    } catch(e) { console.error("TED parse:", e.message); }
   }
-  // 重複除去
   const unique = allResults.filter((n,i,arr)=>arr.findIndex(x=>x._id===n._id)===i);
   console.log(`  ✅ TED: ${unique.length}件`);
   return unique;
 }
 
-// ─── SIMAP（スイス：TED経由） ──────────────────────────────────────────────────
+// ─── SIMAP（スイス：TED POST経由） ────────────────────────────────────────────
 
 async function fetchSIMAP() {
   console.log("📡 SIMAP (Switzerland)...");
-  const cpvs = [...ARCH_CPV.slice(0,3),"45214000","55100000"].map(c=>`cpvs=${c}`).join("&");
-  const res = await safeFetch(`https://api.ted.europa.eu/v3/notices/search?${cpvs}&countries=CH&limit=20&page=1&sortField=publicationDate&sortOrder=desc`,{},"SIMAP");
+  const query = [...ARCH_CPV.slice(0,3),"45214000","55100000"].map(c=>`cpv:${c}`).join(" OR ");
+  const res = await tedSearch(`(${query}) AND (country:CH)`, {}, 20);
   if (!res) return [];
   const data = await res.json();
-  const items = (data.notices||[]).map(n=>({
-    _id:`simap-${n.id||Math.random()}`, _source:"SIMAP",
-    title:Array.isArray(n.title)?n.title[0]:n.title,
-    description:Array.isArray(n.description)?n.description[0]:n.description,
-    acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:n["organisation-name"],
-    budget:n["value-pub"], date_pub:n["publication-date"], deadline:n["deadline-date"],
-    country:"Switzerland", region:"Switzerland",
-    cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"],
-    procedure:n["procedure-type"], nature:n["notice-type"],
-    url:n.link||"https://www.simap.ch",
-  }));
+  const items = (data.notices||[]).map(n=>mapTEDNotice(n,"SIMAP","Switzerland")).filter(Boolean);
   console.log(`  ✅ SIMAP: ${items.length}件`);
   return items;
 }
 
-// ─── Doffin（ノルウェー：TED経由） ────────────────────────────────────────────
+// ─── Doffin（ノルウェー：TED POST経由） ───────────────────────────────────────
 
 async function fetchDoffin() {
   console.log("📡 Doffin (Norway)...");
-  const cpvs = [...ARCH_CPV.slice(0,3),"45214000","55100000"].map(c=>`cpvs=${c}`).join("&");
-  const res = await safeFetch(`https://api.ted.europa.eu/v3/notices/search?${cpvs}&countries=NO&limit=20&page=1&sortField=publicationDate&sortOrder=desc`,{},"Doffin");
+  const query = [...ARCH_CPV.slice(0,3),"45214000","55100000"].map(c=>`cpv:${c}`).join(" OR ");
+  const res = await tedSearch(`(${query}) AND (country:NO)`, {}, 20);
   if (!res) return [];
   const data = await res.json();
-  const items = (data.notices||[]).map(n=>({
-    _id:`doffin-${n.id||Math.random()}`, _source:"Doffin",
-    title:Array.isArray(n.title)?n.title[0]:n.title,
-    description:Array.isArray(n.description)?n.description[0]:n.description,
-    acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:n["organisation-name"],
-    budget:n["value-pub"], date_pub:n["publication-date"], deadline:n["deadline-date"],
-    country:"Norway", region:"Norway",
-    cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"],
-    procedure:n["procedure-type"], nature:n["notice-type"],
-    url:n.link||"https://doffin.no",
-  }));
+  const items = (data.notices||[]).map(n=>mapTEDNotice(n,"Doffin","Norway")).filter(Boolean);
   console.log(`  ✅ Doffin: ${items.length}件`);
   return items;
 }
@@ -534,19 +528,20 @@ async function fetchJapan() {
   return allResults;
 }
 
-// ─── 中東（RCU AlUla・NEOM） ──────────────────────────────────────────────────
+// ─── 中東（RCU AlUla・NEOM・Gulf TED POST） ───────────────────────────────────
 
 async function fetchMiddleEast() {
   console.log("📡 Middle East...");
   const allResults = [];
 
+  // RCU AlUla（RSS試行 - DNS失敗の場合スキップ）
   for (const url of ["https://www.rcualula.gov.sa/en/feed/","https://www.rcualula.gov.sa/feed/"]) {
     const res = await safeFetch(url,{},"RCU AlUla");
     if (!res) continue;
     const xml = await res.text();
     const items = parseRSS(xml,"RCU AlUla",(get)=>({
       _id:`rcu-${Math.random()}`, title:get("title"),
-      description:get("description").replace(/<[^>]*>/g,"").slice(0,400),
+      description:cleanText(get("description"),400),
       acheteur:"Royal Commission for AlUla (RCU)", budget:null,
       date_pub:get("pubDate"), deadline:null,
       country:"Saudi Arabia", region:"AlUla", cpv:"71200000",
@@ -556,34 +551,30 @@ async function fetchMiddleEast() {
     if (items.length>0) { console.log(`  ✅ RCU AlUla: ${items.length}件`); allResults.push(...items); break; }
   }
 
+  // NEOM（RSS試行）
   const neomRes = await safeFetch("https://www.neom.com/en-us/feed/",{},"NEOM");
   if (neomRes) {
     const xml = await neomRes.text();
     const kw = ["architecture","design","competition","tender","construction","cultural","architect","hotel","hospitality"];
     const items = parseRSS(xml,"NEOM",(get)=>{
-      const title=get("title"); const desc=get("description").replace(/<[^>]*>/g,"");
+      const title=get("title"); const desc=cleanText(get("description"),400);
       if (!kw.some(k=>title.toLowerCase().includes(k)||desc.toLowerCase().includes(k))) return null;
-      return { _id:`neom-${Math.random()}`, title, description:desc.slice(0,400), acheteur:"NEOM", budget:null, date_pub:get("pubDate"), deadline:null, country:"Saudi Arabia", region:"NEOM", cpv:"71200000", procedure:"", nature:"", url:get("link")||"https://www.neom.com" };
+      return { _id:`neom-${Math.random()}`, title, description:desc, acheteur:"NEOM", budget:null, date_pub:get("pubDate"), deadline:null, country:"Saudi Arabia", region:"NEOM", cpv:"71200000", procedure:"", nature:"", url:get("link")||"https://www.neom.com" };
     }).filter(Boolean);
     console.log(`  ✅ NEOM: ${items.length}件`);
     allResults.push(...items);
   }
 
-  // UAE・カタール等（TED経由）
-  const uaeRes = await safeFetch("https://api.ted.europa.eu/v3/notices/search?countries=AE&countries=QA&countries=SA&cpvs=71200000&limit=10&page=1&sortField=publicationDate&sortOrder=desc",{},"Gulf-TED");
-  if (uaeRes) {
-    const data = await uaeRes.json();
-    const items = (data.notices||[]).map(n=>({
-      _id:`gulf-${n.id||Math.random()}`, _source:"Gulf Procurement",
-      title:Array.isArray(n.title)?n.title[0]:n.title,
-      description:Array.isArray(n.description)?n.description[0]:n.description,
-      acheteur:Array.isArray(n["organisation-name"])?n["organisation-name"][0]:n["organisation-name"],
-      budget:n["value-pub"], date_pub:n["publication-date"], deadline:n["deadline-date"],
-      country:n.country, region:n.country, cpv:Array.isArray(n["cpv-code"])?n["cpv-code"][0]:n["cpv-code"],
-      procedure:n["procedure-type"], nature:n["notice-type"], url:n.link||"https://ted.europa.eu",
-    }));
-    console.log(`  ✅ Gulf (TED): ${items.length}件`);
-    allResults.push(...items);
+  // Gulf TED（POST経由）
+  const gulfQuery = `cpv:71200000 AND (country:AE OR country:QA OR country:SA OR country:BH OR country:KW OR country:OM)`;
+  const gulfRes = await tedSearch(gulfQuery, {}, 15);
+  if (gulfRes) {
+    try {
+      const data = await gulfRes.json();
+      const items = (data.notices||[]).map(n=>mapTEDNotice(n,"Gulf Procurement")).filter(Boolean);
+      console.log(`  ✅ Gulf (TED): ${items.length}件`);
+      allResults.push(...items);
+    } catch(e) {}
   }
 
   return allResults;
