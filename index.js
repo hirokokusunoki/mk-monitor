@@ -22,7 +22,7 @@ const CONFIG = {
   senderEmail:   process.env.SENDER_EMAIL || "onboarding@resend.dev",
   anthropicKey:  process.env.ANTHROPIC_API_KEY,
   timezone:      "Europe/Paris",
-  schedule:      "0 7 * * *",
+  schedule:      "* * * * *",
   priorityScore: parseInt(process.env.PRIORITY_SCORE || "15"),
 };
 
