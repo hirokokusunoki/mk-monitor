@@ -390,8 +390,14 @@ async function fetchBOAMP() {
 // ─── TED API ヘルパー（POST） ─────────────────────────────────────────────────
 
 async function tedSearch(query, limit=30) {
-  // sortField/sortOrderは無効なフィールドのため除外
-  const body = { query, page: 1, limit };
+  // fieldsは必須。sortField/sortOrderは無効なので除外
+  const body = {
+    query,
+    fields: ["title","description","organisation-name","value-pub","cpv-code",
+             "publication-date","deadline-date","country","procedure-type","notice-type","link"],
+    page: 1,
+    limit,
+  };
   try {
     const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
       method: "POST",
