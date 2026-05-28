@@ -341,7 +341,7 @@ async function fetchBOAMP() {
         continue;
       }
 
-      const data = await res.json();
+      const data = JSON.parse(res._text||"{}");
       const rows = data.results||data.data||data.records||[];
 
       if (rows.length === 0) {
@@ -387,30 +387,35 @@ async function fetchBOAMP() {
   return [];
 }
 
-// ─── TED APIヘルパー（v2 - シンプルなフィールド名） ──────────────────────────
+// ─── TED APIヘルパー（v3 POST、fieldsなし） ──────────────────────────────────
 
 async function tedSearch(query, limit=30) {
-  // TED v2 API - 伝統的なフィールド名、GETリクエスト
-  const params = new URLSearchParams({
-    q: `content:[${query}]`,
-    fields: "title,content,nd,uris,locations,notice-type,form-type,publication-number",
-    pageSize: String(limit),
-    pageNum: "1",
-    scope: "0",
-  });
+  // fieldsを省略して試行（空もNG、無効名もNG → 省略）
+  const body = { query, page: 1, limit };
   try {
-    const res = await fetch(`https://api.ted.europa.eu/v2.0/notices.json?${params}`, {
-      method: "GET",
-      headers: { "Accept":"application/json",
+    const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "Accept":"application/json",
                  "User-Agent":"Mozilla/5.0 (compatible; MKMonitor/1.0)" },
+      body: JSON.stringify(body),
       timeout: 15000,
     });
     if (!res.ok) {
       const errText = await res.text().catch(()=>"");
-      console.error(`⚠️ TED v2 HTTP ${res.status}: ${errText.slice(0,200)}`);
+      console.error(`⚠️ TED HTTP ${res.status}: ${errText.slice(0,300)}`);
       return null;
     }
-    return res;
+    // 成功時：レスポンス構造をログ出力（1回のみ）
+    const text = await res.text();
+    if (!tedSearch._logged) {
+      tedSearch._logged = true;
+      try {
+        const sample = JSON.parse(text);
+        const first = (sample.notices||sample.results||[])[0];
+        if (first) console.log("  TED keys:", Object.keys(first).slice(0,20).join(", "));
+      } catch(e) {}
+    }
+    return { ok: true, _text: text };
   } catch(e) {
     console.error(`⚠️ TED error: ${e.message}`);
     return null;
@@ -418,61 +423,54 @@ async function tedSearch(query, limit=30) {
 }
 
 function mapTEDNotice(n, source="TED/OJEU", countryOverride=null) {
-  // TED v2レスポンス構造に対応
-  if (!mapTEDNotice._logged && n) {
-    mapTEDNotice._logged = true;
-    console.log("  TED v2 sample keys:", Object.keys(n).slice(0,15).join(", "));
-  }
-  // v2の構造: n.content[0], n.title[0], n.uris[0], n.locations[0]
-  const title = Array.isArray(n.title)?n.title[0]:
-    (Array.isArray(n.content)?n.content[0]?.substring(0,100):n.title||"");
-  const titleStr = String(title||"").trim();
-  if (titleStr.length < 3) return null;
-
-  const loc = Array.isArray(n.locations)?n.locations[0]||"":"";
-  const uri = Array.isArray(n.uris)?n.uris[0]||"":"";
-  const nd  = n["publication-number"]||n.nd||"";
-
+  // 取得できたキーに合わせて柔軟にマッピング
+  const get = (...keys) => {
+    for (const k of keys) {
+      const v = n[k];
+      if (!v) continue;
+      const s = Array.isArray(v) ? (v.find(x=>x&&String(x).trim().length>2)||v[0]) : v;
+      if (s && String(s).trim().length > 0) return String(s).trim();
+    }
+    return "";
+  };
+  const title = get("title","notice-title","subject","name","BT-21-Procedure","procedure-title");
+  if (title.length < 3) return null;
   return {
-    _id: `${source.toLowerCase().replace(/[^a-z]/g,"-")}-${nd||Math.random()}`,
+    _id: `${source.toLowerCase().replace(/[^a-z]/g,"-")}-${get("id","publication-number","nd")||Math.random()}`,
     _source: source,
-    title: cleanText(titleStr),
-    description: cleanText(Array.isArray(n.content)?n.content[0]||"":""),
-    acheteur: "",
-    budget: null,
-    date_pub: n["publication-date"]||null,
-    deadline: null,
-    country: countryOverride||String(loc).split(",").pop()?.trim()||"",
-    region:  countryOverride||String(loc)||"",
-    cpv: "",
-    procedure: n["form-type"]||n["notice-type"]||"",
-    nature: n["notice-type"]||"",
-    url: uri||`https://ted.europa.eu/udl?uri=TED:NOTICE:${nd}:TEXT:EN:HTML`,
+    title: cleanText(title),
+    description: cleanText(get("description","summary","content","BT-23-Procedure","short-description")),
+    acheteur: cleanText(get("organisation-name","buyer-name","buyer","authority","OPP-052-Organization")),
+    budget: n["value-pub"]||n["estimated-value"]||n.value||null,
+    date_pub: get("publication-date","publicationDate","published-date"),
+    deadline: get("deadline-date","submissionDeadline","submission-deadline","deadline"),
+    country: countryOverride||get("country","buyer-country","location","place"),
+    region:  countryOverride||get("country","buyer-country","location","place"),
+    cpv: get("cpv-code","cpv","cpvCodes","cpv-codes"),
+    procedure: get("procedure-type","procedure","form-type"),
+    nature: get("notice-type","noticeType","type","form-type"),
+    url: get("link","permalink","url")||"https://ted.europa.eu",
   };
 }
 
 async function fetchTED() {
   console.log("📡 TED/OJEU...");
   const allResults = [];
-
-  // フォーマット1: query + sortField/sortOrder
   const searches = [
     "architect museum library theatre concert hall cultural",
-    "school university campus education hospital hotel airport station",
-    "musée bibliothèque théâtre école université hôtel gare aéroport",
+    "school university campus education hotel airport station",
+    "musée bibliothèque théâtre école université hôtel gare",
   ];
-
   for (const q of searches) {
     const res = await tedSearch(q, 25);
     if (!res) continue;
     try {
-      const data = await res.json();
+      const data = JSON.parse(res._text);
       const notices = data.notices||data.results||data.items||[];
       const items = notices.map(n=>mapTEDNotice(n,"TED/OJEU")).filter(Boolean);
       allResults.push(...items);
     } catch(e) { console.error("TED parse:", e.message); }
   }
-
   const unique = allResults.filter((n,i,arr)=>arr.findIndex(x=>x._id===n._id)===i);
   console.log(`  ✅ TED: ${unique.length}件`);
   return unique;
@@ -485,7 +483,7 @@ async function fetchSIMAP() {
   const res = await tedSearch("architect museum library school hotel Switzerland", 20);
   if (!res) return [];
   try {
-    const data = await res.json();
+    const data = JSON.parse(res._text||"{}");
     const items = (data.notices||[])
       .filter(n => {
         const country = n.country||"";
@@ -504,7 +502,7 @@ async function fetchDoffin() {
   const res = await tedSearch("architect museum library school hotel Norway Norge", 20);
   if (!res) return [];
   try {
-    const data = await res.json();
+    const data = JSON.parse(res._text||"{}");
     const items = (data.notices||[])
       .filter(n => {
         const country = n.country||"";
@@ -764,7 +762,7 @@ Return this exact structure (translate values to each language, use "不明"/"N/
       body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,messages:[{role:"user",content:prompt}]}),
     });
     if (!res.ok) return null;
-    const data = await res.json();
+    const data = JSON.parse(res._text||"{}");
     const text = data.content.map(c=>c.text||"").join("").trim();
     return JSON.parse(text.replace(/```json|```/g,"").trim());
   } catch(e) { return null; }
@@ -952,17 +950,21 @@ async function runMonitor() {
       const isComp = n.procedure==="Competition"||n.nature==="Competition";
       const hasBuildingType = bType !== null;
 
-      // コンペは全て含める（タイトルがある場合）
+      // コンペは全て通す
       if (isComp) return true;
-      // 1M€以上かつ建物タイプが特定できる場合
-      if (b>=1000000 && hasBuildingType) return true;
-      // 5M€以上は建物タイプ不明でも含める
+      // 5M€以上は全て
       if (b>=5000000) return true;
-      // 優先地域（仏・スイス・北欧・欧州・日本・中東）の対象施設は500K€以上
-      if ([1,2,3,4,65].includes(geo) && hasBuildingType && b>=500000) return true;
-      // AlUla・NEOMは金額不問
+      // 1M€以上かつ建物タイプあり
+      if (b>=1000000 && hasBuildingType) return true;
+      // フランス・欧州は予算なしでも建物タイプがあれば通す（BOAMP対応）
+      if ([1,2,3].includes(geo) && hasBuildingType) return true;
+      // 日本・中東も建物タイプがあれば通す
+      if ([4,65].includes(geo) && hasBuildingType) return true;
+      // AlUla/NEOMは金額不問
       const text = [n.title,n.description].filter(Boolean).join(" ").toLowerCase();
       if (text.includes("alula")||text.includes("neom")) return true;
+      // スコアが高い案件
+      if (n._score>=40) return true;
       return false;
     })
     .sort((a,b)=>b._score-a._score);
@@ -1015,7 +1017,7 @@ async function runMonitor() {
 // ─── フォローリンク生成 ────────────────────────────────────────────────────────
 
 function buildFollowUrl(notice) {
-  const SERVICE_URL = process.env.SERVICE_URL || "";
+  const SERVICE_URL = process.env.SERVICE_URL || "https://mk-monitor-production.up.railway.app";
   if (!SERVICE_URL) return null;
   const data = {
     title:   notice.title || "",
