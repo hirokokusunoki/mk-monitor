@@ -1056,7 +1056,7 @@ function saveProjects(projects) {
 }
 
 const followedProjects = loadProjects();
-console.log(\`✅ Followed projects: \${followedProjects.length}件 読み込み済み\`);
+console.log("✅ Followed projects: " + followedProjects.length + "件 読み込み済み");
 
 async function sendFollowNotification(noticeData, assignedTo, assignedEmail) {
   // フォロー済みリストに追加
