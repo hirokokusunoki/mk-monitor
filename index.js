@@ -3,12 +3,14 @@ const cron    = require("node-cron");
 const fetch   = require("node-fetch");
 const express = require("express");
 const { Resend } = require("resend");
+const partnerDB    = require("./partners");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const IS_TEST = process.argv.includes("--test");
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+partnerDB(app);
 
 const RECIPIENTS = [
   { name:"HK",      email:process.env.EMAIL_HK,      filterLevel:"priority", lang:"ja",        group:"hk" },
@@ -1253,7 +1255,10 @@ app.get("/dashboard", (req, res) => {
               <span style="color:#6b7280">Assigned to:</span>
               <span style="font-weight:600;color:#0284c7;margin-left:6px">${escapeHtml(p.assignedTo)}</span>
             </div>
-            <a href="${escapeHtml(p.url)}" target="_blank" style="font-size:11px;color:#2563eb;text-decoration:none">→ View dossier ↗</a>
+            <div style="display:flex;gap:12px;align-items:center">
+              <a href="${escapeHtml(p.url)}" target="_blank" style="font-size:11px;color:#2563eb;text-decoration:none">→ View dossier ↗</a>
+              <a href="/team-builder?noticeId=${encodeURIComponent(p.id||p.title)}&noticeTitle=${encodeURIComponent(p.title)}&noticeUrl=${encodeURIComponent(p.url)}" style="font-size:11px;color:#059669;text-decoration:none;font-weight:600">👥 Constituer l'équipe</a>
+            </div>
           </div>
         </div>`;
       }).join("");
@@ -1280,6 +1285,10 @@ app.get("/dashboard", (req, res) => {
       <div class="header-sub">Moreau Kusunoki Architectes — MK Monitor</div>
       <div class="header-title">🔔 Followed Projects</div>
       <div class="header-count">${followedProjects.length} project${followedProjects.length!==1?"s":""} in follow-up</div>
+      <div style="margin-top:10px;display:flex;gap:16px">
+        <a href="/dashboard" style="font-size:10px;color:#f1f5f9;text-decoration:none;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid #3b82f6;padding-bottom:2px">Projets suivis</a>
+        <a href="/partners" style="font-size:10px;color:#94a3b8;text-decoration:none;letter-spacing:.1em;text-transform:uppercase">Partner DB</a>
+      </div>
     </div>
   </div>
   <div class="content">
