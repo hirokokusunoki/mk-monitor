@@ -8,8 +8,20 @@ const path = require("path");
 
 // ─── データ読み込み ─────────────────────────────────────────────────────────────
 
-const DATA_FILE  = path.join(__dirname, "partners_data.json");
-const TEAMS_FILE = path.join(__dirname, "teams_data.json");
+// /data はRailway Volume（永続ディスク）。ローカルは ./data にフォールバック
+const DATA_DIR   = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, "data");
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// partners_data.jsonはVolumeになければプロジェクトルートから初期コピー
+const DATA_FILE  = path.join(DATA_DIR, "partners_data.json");
+const TEAMS_FILE = path.join(DATA_DIR, "teams_data.json");
+const SEED_FILE  = path.join(__dirname, "partners_data.json");
+
+// 初回起動時：Volumeにまだファイルがなければシードデータをコピー
+if (!fs.existsSync(DATA_FILE) && fs.existsSync(SEED_FILE)) {
+  fs.copyFileSync(SEED_FILE, DATA_FILE);
+  console.log("✅ partners_data.json → Volume に初期コピー完了");
+}
 
 let partners = [];
 let teams    = {};   // { noticeId: { noticeTitle, noticeUrl, members: [{partnerId, role}] } }
