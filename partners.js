@@ -164,12 +164,13 @@ module.exports = function(app) {
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;background:#f0efed;min-height:100vh}
-  .header{background:#0f172a;padding:20px 32px}
-  .header-sub{font-size:9px;color:#475569;letter-spacing:.2em;text-transform:uppercase;margin-bottom:6px}
-  .header-title{font-size:18px;font-weight:300;color:#f1f5f9;letter-spacing:.15em;text-transform:uppercase}
-  .header-nav{margin-top:12px;display:flex;gap:12px}
-  .nav-link{font-size:10px;color:#94a3b8;text-decoration:none;letter-spacing:.1em;text-transform:uppercase;padding:4px 0;border-bottom:1px solid transparent}
-  .nav-link:hover,.nav-link.active{color:#f1f5f9;border-bottom-color:#3b82f6}
+  .header{background:#0f172a;padding:32px 48px 0}
+  .header-firm{font-size:22px;font-weight:300;color:#f1f5f9;letter-spacing:0.25em;text-transform:uppercase}
+  .header-sub{font-size:9px;color:#475569;letter-spacing:0.25em;text-transform:uppercase;margin-top:6px}
+  .nav{display:flex;gap:0;margin-top:24px}
+  .nav-link{font-size:9px;font-weight:600;letter-spacing:0.2em;text-transform:uppercase;color:#475569;text-decoration:none;padding:10px 20px 10px 0;margin-right:24px;border-bottom:2px solid transparent}
+  .nav-link:hover{color:#94a3b8}
+  .nav-link.active{color:#f1f5f9;border-bottom-color:#f1f5f9}
   .content{max-width:1100px;margin:0 auto;padding:24px 32px}
   .filters{background:white;border:1px solid #e5e7eb;border-radius:4px;padding:16px 20px;margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
   .filter-group{display:flex;flex-direction:column;gap:4px}
@@ -203,9 +204,9 @@ module.exports = function(app) {
 <body>
 <div class="header">
   <div style="max-width:1100px;margin:0 auto">
-    <div class="header-sub">Moreau Kusunoki Architectes — MK Monitor</div>
-    <div class="header-title">🗃 Partner DB</div>
-    <div class="header-nav">
+    <div class="header-firm">Moreau Kusunoki</div>
+    <div class="header-sub">Architectes &nbsp;—&nbsp; MK Monitor</div>
+    <div class="nav">
       <a href="/dashboard" class="nav-link">Projets suivis</a>
       <a href="/partners" class="nav-link active">Partner DB</a>
     </div>
@@ -477,9 +478,13 @@ doSearch();
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;background:#f0efed;min-height:100vh}
-  .header{background:#0f172a;padding:20px 32px}
-  .header-sub{font-size:9px;color:#475569;letter-spacing:.2em;text-transform:uppercase;margin-bottom:6px}
-  .header-title{font-size:18px;font-weight:300;color:#f1f5f9;letter-spacing:.15em;text-transform:uppercase}
+  .header{background:#0f172a;padding:32px 48px 0}
+  .header-firm{font-size:22px;font-weight:300;color:#f1f5f9;letter-spacing:0.25em;text-transform:uppercase}
+  .header-sub{font-size:9px;color:#475569;letter-spacing:0.25em;text-transform:uppercase;margin-top:6px}
+  .nav{display:flex;gap:0;margin-top:24px}
+  .nav-link{font-size:9px;font-weight:600;letter-spacing:0.2em;text-transform:uppercase;color:#475569;text-decoration:none;padding:10px 20px 10px 0;margin-right:24px;border-bottom:2px solid transparent}
+  .nav-link:hover{color:#94a3b8}
+  .nav-link.active{color:#f1f5f9;border-bottom-color:#f1f5f9}
   .notice-bar{background:#1e293b;padding:10px 32px;font-size:12px;color:#94a3b8;display:flex;gap:16px;align-items:center}
   .content{max-width:1200px;margin:0 auto;padding:24px 32px;display:grid;grid-template-columns:1fr 320px;gap:20px}
   .panel{background:white;border:1px solid #e5e7eb;border-radius:4px;padding:20px}
@@ -511,8 +516,12 @@ doSearch();
 <body>
 <div class="header">
   <div style="max-width:1200px;margin:0 auto">
-    <div class="header-sub">Moreau Kusunoki Architectes — MK Monitor</div>
-    <div class="header-title">👥 Team Builder</div>
+    <div class="header-firm">Moreau Kusunoki</div>
+    <div class="header-sub">Architectes &nbsp;—&nbsp; MK Monitor</div>
+    <div class="nav">
+      <a href="/dashboard" class="nav-link">Projets suivis</a>
+      <a href="/partners" class="nav-link">Partner DB</a>
+    </div>
   </div>
 </div>
 <div class="notice-bar">
