@@ -1036,7 +1036,27 @@ function buildFollowUrl(notice) {
 
 // ─── フォロー済みプロジェクト（メモリ内ストレージ） ────────────────────────────
 
-const followedProjects = [];
+const fs   = require("fs");
+const path = require("path");
+
+// /data はRailway Volume（永続ディスク）
+// ローカル環境では ./data にフォールバック
+const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, "data");
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const PROJECTS_FILE = path.join(DATA_DIR, "followed_projects.json");
+
+function loadProjects() {
+  try { return JSON.parse(fs.readFileSync(PROJECTS_FILE, "utf-8")); }
+  catch(e) { return []; }
+}
+
+function saveProjects(projects) {
+  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf-8");
+}
+
+const followedProjects = loadProjects();
+console.log(\`✅ Followed projects: \${followedProjects.length}件 読み込み済み\`);
 
 async function sendFollowNotification(noticeData, assignedTo, assignedEmail) {
   // フォロー済みリストに追加
@@ -1047,6 +1067,7 @@ async function sendFollowNotification(noticeData, assignedTo, assignedEmail) {
     assignedEmail,
     ...noticeData,
   });
+  saveProjects(followedProjects);
 
   const teamMembers = RECIPIENTS.filter(r => r.email);
   const toList = teamMembers.map(r => r.email).filter(Boolean);
@@ -1277,6 +1298,11 @@ app.get("/dashboard", (req, res) => {
   .header-title { font-size:18px; font-weight:300; color:#f1f5f9; letter-spacing:0.15em; text-transform:uppercase; }
   .header-count { font-size:11px; color:#64748b; margin-top:4px; }
   .content { max-width:800px; margin:0 auto; padding:24px 32px; }
+  .nav-bar { background:#1e293b; border-bottom:1px solid #0f172a; }
+  .nav-inner { max-width:800px; margin:0 auto; padding:0 32px; display:flex; gap:0; }
+  .nav-link { font-size:9px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#64748b; text-decoration:none; padding:11px 16px 10px; border-bottom:2px solid transparent; display:inline-block; }
+  .nav-link:hover { color:#94a3b8; }
+  .nav-link.active { color:#f1f5f9; border-bottom-color:#3b82f6; }
 </style>
 </head>
 <body>
@@ -1285,10 +1311,12 @@ app.get("/dashboard", (req, res) => {
       <div class="header-sub">Moreau Kusunoki Architectes — MK Monitor</div>
       <div class="header-title">🔔 Followed Projects</div>
       <div class="header-count">${followedProjects.length} project${followedProjects.length!==1?"s":""} in follow-up</div>
-      <div style="margin-top:10px;display:flex;gap:16px">
-        <a href="/dashboard" style="font-size:10px;color:#f1f5f9;text-decoration:none;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid #3b82f6;padding-bottom:2px">Projets suivis</a>
-        <a href="/partners" style="font-size:10px;color:#94a3b8;text-decoration:none;letter-spacing:.1em;text-transform:uppercase">Partner DB</a>
-      </div>
+    </div>
+  </div>
+  <div class="nav-bar">
+    <div class="nav-inner">
+      <a href="/dashboard" class="nav-link active">🔔 Projets suivis</a>
+      <a href="/partners" class="nav-link">🗃 Partner DB</a>
     </div>
   </div>
   <div class="content">
