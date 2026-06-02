@@ -5,7 +5,11 @@ const express = require("express");
 const { Resend } = require("resend");
 const partnerDB    = require("./partners");
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Resend初期化（APIキーがない場合はnull、メール送信をスキップ）
+const resend = process.env.RESEND_API_KEY
+  ? new Resend(process.env.RESEND_API_KEY)
+  : null;
+if (!resend) console.warn("⚠️  RESEND_API_KEY が未設定です。メール送信は無効化されています。");
 const IS_TEST = process.argv.includes("--test");
 const app = express();
 app.use(express.urlencoded({ extended: true }));
@@ -971,23 +975,36 @@ function buildEmail(notices, lang, date) {
   const byType = Object.fromEntries(Object.keys(BUILDING_TYPES).map(t=>[t,notices.filter(n=>detectBuildingType(n)===t).length]));
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f8fafc;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif">
-<div style="max-width:680px;margin:0 auto;padding:20px 16px">
-  <div style="background:#0f172a;border-radius:6px 6px 0 0;padding:22px 28px">
-    <div style="font-size:9px;color:#475569;letter-spacing:0.2em;text-transform:uppercase;margin-bottom:5px">Moreau Kusunoki Architectes</div>
-    <h1 style="margin:0;font-size:20px;font-weight:300;color:#f1f5f9;letter-spacing:0.15em;text-transform:uppercase">${L.title}</h1>
-    <div style="font-size:12px;color:#64748b;margin-top:4px">${dateStr}</div>
+<body style="margin:0;padding:0;background:#D9D8D6;font-family:Arial,sans-serif">
+<div style="max-width:660px;margin:0 auto;padding:24px 16px">
+
+  <!-- HEADER -->
+  <div style="background:#ffffff;border-bottom:3px solid #0016B4;padding:24px 28px">
+    <div style="font-size:8px;font-weight:700;letter-spacing:0.28em;text-transform:uppercase;color:#676867">Architectes &mdash; MK Monitor</div>
+    <div style="font-size:24px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#1a1a1a;margin-top:6px;line-height:1">Moreau Kusunoki</div>
+    <div style="font-size:9px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#676867;margin-top:10px">${dateStr}</div>
   </div>
-  <div style="background:#1e293b;padding:14px 28px">
+
+  <!-- STATS BAR -->
+  <div style="background:#676867;padding:12px 28px">
     <table cellpadding="0" cellspacing="0"><tr>
-      <td style="text-align:center;padding-right:20px"><div style="font-size:20px;font-weight:600;color:#f1f5f9;font-family:monospace">${totalCount}</div><div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em">${L.total}</div></td>
-      ${Object.entries(byType).filter(([,v])=>v>0).map(([t,v])=>`<td style="text-align:center;padding-right:20px"><div style="font-size:20px;font-weight:600;color:#f1f5f9;font-family:monospace">${v}</div><div style="font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em">${BUILDING_TYPES[t].label[lang==="bilingual"?"en":lang]||BUILDING_TYPES[t].label.en}</div></td>`).join("")}
+      <td style="text-align:center;padding-right:28px;border-right:1px solid #888;margin-right:28px">
+        <div style="font-size:22px;font-weight:700;color:#ffffff;font-family:Arial,sans-serif">${totalCount}</div>
+        <div style="font-size:8px;font-weight:700;color:#D9D8D6;text-transform:uppercase;letter-spacing:0.18em;margin-top:2px">${L.total}</div>
+      </td>
+      ${Object.entries(byType).filter(([,v])=>v>0).map(([t,v])=>`<td style="text-align:center;padding:0 28px">
+        <div style="font-size:22px;font-weight:700;color:#ffffff;font-family:Arial,sans-serif">${v}</div>
+        <div style="font-size:8px;font-weight:700;color:#D9D8D6;text-transform:uppercase;letter-spacing:0.18em;margin-top:2px">${BUILDING_TYPES[t].label[lang==="bilingual"?"en":lang]||BUILDING_TYPES[t].label.en}</div>
+      </td>`).join("")}
     </tr></table>
   </div>
-  <div style="background:white;border-radius:0 0 6px 6px;padding:24px 28px;border:1px solid #e2e8f0;border-top:none">
+
+  <!-- CONTENT -->
+  <div style="background:#ffffff;padding:24px 28px;border:1px solid #c4c3c1;border-top:none">
     ${sections}
-    <div style="margin-top:24px;padding-top:16px;border-top:1px solid #f1f5f9;font-size:10px;color:#94a3b8;line-height:1.7">${L.footer}</div>
+    <div style="margin-top:24px;padding-top:14px;border-top:1px solid #D9D8D6;font-size:9px;color:#676867;line-height:1.7;letter-spacing:0.05em">${L.footer}</div>
   </div>
+
 </div>
 </body></html>`;
 }
@@ -1093,6 +1110,7 @@ async function runMonitor() {
     const subject = buildSubject(group.lang,notices.length,new Date());
     const toList  = group.recipients.map(r=>r.email);
     console.log(`📧 送信中 → [${groupName}] ${toList.join(", ")} (${notices.length}件)`);
+    if (!resend) { console.log(`📭 ${groupName}: メール送信スキップ（APIキー未設定）`); continue; }
     const {error} = await resend.emails.send({from:CONFIG.senderEmail,to:toList,subject,html});
     if (error) console.error(`❌ ${groupName}:`,error);
     else       console.log(`✅ ${groupName} 送信完了`);
