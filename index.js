@@ -343,7 +343,9 @@ async function fetchBOAMP() {
         continue;
       }
 
-      const data = JSON.parse(res._text||"{}");
+      const text = await res.text();
+      let data = {};
+      try { data = JSON.parse(text); } catch(e) { console.error("  ⚠️ BOAMP JSON parse error:", e.message); continue; }
       const rows = data.results||data.data||data.records||[];
 
       if (rows.length === 0) {
@@ -393,7 +395,13 @@ async function fetchBOAMP() {
 
 async function tedSearch(query, limit=30) {
   // fieldsを省略して試行（空もNG、無効名もNG → 省略）
-  const body = { query, page: 1, limit };
+  // TED API v3 requires "fields" to not be empty
+  const body = {
+    query,
+    page: 1,
+    limit,
+    fields: ["ND","TI","DS","CY","CPV","AU","TVH","DT","DD","PD","MA","PR","RP","RC"],
+  };
   try {
     const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
       method: "POST",
@@ -407,15 +415,17 @@ async function tedSearch(query, limit=30) {
       console.error(`⚠️ TED HTTP ${res.status}: ${errText.slice(0,300)}`);
       return null;
     }
-    // 成功時：レスポンス構造をログ出力（1回のみ）
     const text = await res.text();
     if (!tedSearch._logged) {
       tedSearch._logged = true;
       try {
         const sample = JSON.parse(text);
+        const keys = Object.keys(sample);
         const first = (sample.notices||sample.results||[])[0];
-        if (first) console.log("  TED keys:", Object.keys(first).slice(0,20).join(", "));
-      } catch(e) {}
+        console.log("  TED response keys:", keys.join(", "));
+        if (first) console.log("  TED notice keys:", Object.keys(first).slice(0,20).join(", "));
+        else console.log("  TED: no notices in response. Sample:", text.slice(0,200));
+      } catch(e) { console.log("  TED raw:", text.slice(0,200)); }
     }
     return { ok: true, _text: text };
   } catch(e) {
@@ -557,19 +567,31 @@ async function fetchArchDaily() {
 
 async function fetchRIBA() {
   console.log("📡 RIBA...");
-  const res = await safeFetch("https://competitions.architecture.com/feed/",{},"RIBA");
-  if (!res) return [];
-  const xml = await res.text();
-  const results = parseRSS(xml,"RIBA",(get)=>({
-    _id:`riba-${Math.random()}`, title:get("title"),
-    description:get("description").replace(/<[^>]*>/g,"").slice(0,400),
-    acheteur:"RIBA", budget:null, date_pub:get("pubDate"), deadline:null,
-    country:"UK", region:"UK", cpv:"71200000",
-    procedure:"Competition", nature:"Competition",
-    url:get("link")||"https://competitions.architecture.com",
-  }));
-  console.log(`  ✅ RIBA: ${results.length}件`);
-  return results;
+  // RIBAのフィードURLを複数試行（URLが変更された可能性あり）
+  const ribaUrls = [
+    "https://www.architecture.com/riba/competitions/feed/",
+    "https://www.architecture.com/awards-and-competitions-landing-page/competitions/feed/",
+    "https://www.architecture.com/knowledge-and-resources/find-an-architect/competitions/feed/",
+  ];
+  for (const url of ribaUrls) {
+    const res = await safeFetch(url, {}, "RIBA");
+    if (!res) continue;
+    const xml = await res.text();
+    const results = parseRSS(xml,"RIBA",(get)=>({
+      _id:`riba-${Math.random()}`, title:get("title"),
+      description:get("description").replace(/<[^>]*>/g,"").slice(0,400),
+      acheteur:"RIBA", budget:null, date_pub:get("pubDate"), deadline:null,
+      country:"UK", region:"UK", cpv:"71200000",
+      procedure:"Competition", nature:"Competition",
+      url:get("link")||"https://www.architecture.com",
+    }));
+    if (results.length > 0) {
+      console.log(`  ✅ RIBA: ${results.length}件`);
+      return results;
+    }
+  }
+  console.log("  ⚠️ RIBA: 全URL失敗または0件");
+  return [];
 }
 
 // ─── 日本（JIA・国土交通省） ──────────────────────────────────────────────────
@@ -631,7 +653,12 @@ async function fetchMiddleEast() {
   const allResults = [];
 
   // RCU AlUla（RSS試行 - DNS失敗の場合スキップ）
-  for (const url of ["https://www.rcualula.gov.sa/en/feed/","https://www.rcualula.gov.sa/feed/"]) {
+  for (const url of [
+      "https://rcualula.gov.sa/en/feed/",
+      "https://rcualula.gov.sa/feed/",
+      "https://www.rcualula.gov.sa/wp/feed/",
+      "https://rcualula.gov.sa/en/news/feed/",
+    ]) {
     const res = await safeFetch(url,{},"RCU AlUla");
     if (!res) continue;
     const xml = await res.text();
