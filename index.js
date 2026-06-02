@@ -1745,6 +1745,54 @@ function esc(s) {
 
 
 
+// ─── API: 最新公募データ ────────────────────────────────────────────────────────
+app.get("/api/notices", (req, res) => {
+  const NOTICES_FILE = path.join(DATA_DIR, "last_notices.json");
+  try {
+    const data = JSON.parse(fs.readFileSync(NOTICES_FILE, "utf-8"));
+    let notices = data.notices || [];
+    const { country, type, budget_min, q, source } = req.query;
+    if (country) notices = notices.filter(n => n.country === country || n.region === country);
+    if (type) notices = notices.filter(n => n.buildingType === type || n.procedure === type || n.nature === type);
+    if (budget_min) notices = notices.filter(n => (parseFloat(n.budgetRaw)||0) >= parseFloat(budget_min));
+    if (q) { const ql = q.toLowerCase(); notices = notices.filter(n => (n.title||"").toLowerCase().includes(ql) || (n.acheteur||"").toLowerCase().includes(ql)); }
+    if (source) notices = notices.filter(n => n.source === source);
+    res.json({ runAt: data.runAt, total: data.notices.length, count: notices.length, notices });
+  } catch(e) {
+    res.json({ runAt: null, total: 0, count: 0, notices: [] });
+  }
+});
+
+// ─── API: 進捗催促メール ────────────────────────────────────────────────────────
+app.post("/api/remind/:projectId", async (req, res) => {
+  const project = followedProjects.find(p => String(p.id) === req.params.projectId);
+  if (!project) return res.status(404).json({ error: "Projet introuvable" });
+  if (!project.assignedEmail) return res.status(400).json({ error: "Pas d'email assigné" });
+  if (!resend) return res.status(500).json({ error: "RESEND_API_KEY non configuré" });
+  const subject = `MK Monitor — Rapport de progression requis : ${project.title}`;
+  const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+    <div style="background:#1a1a1a;padding:20px 28px">
+      <div style="font-size:8px;color:#676867;letter-spacing:0.25em;text-transform:uppercase">Moreau Kusunoki Architectes</div>
+      <div style="font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.12em;text-transform:uppercase;margin-top:6px">MK Monitor</div>
+    </div>
+    <div style="background:#ffffff;padding:28px;border:1px solid #e5e7eb;border-top:none">
+      <p style="font-size:13px;color:#1a1a1a">Bonjour ${escapeHtml(project.assignedTo)},</p>
+      <p style="font-size:13px;color:#1a1a1a;margin-top:12px">Merci de rapporter l'état d'avancement des documents de candidature pour le concours suivant <strong>avant la fin de la journée</strong> :</p>
+      <div style="background:#f5f4f2;border-left:3px solid #0016B4;padding:14px 18px;margin:18px 0">
+        <div style="font-size:14px;font-weight:700;color:#1a1a1a">${escapeHtml(project.title)}</div>
+        <div style="font-size:11px;color:#676867;margin-top:4px">${escapeHtml(project.acheteur||"")} · ${escapeHtml(project.country||"")}</div>
+        ${project.url ? `<div style="margin-top:8px"><a href="${escapeHtml(project.url)}" style="font-size:11px;color:#0016B4">→ Accéder au dossier</a></div>` : ""}
+      </div>
+      <p style="font-size:11px;color:#676867;margin-top:12px">Merci de votre retour.<br>— MK Monitor</p>
+    </div>
+  </div>`;
+  try {
+    const { error } = await resend.emails.send({ from: CONFIG.senderEmail, to: project.assignedEmail, subject, html });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get("/health", (req, res) => res.json({
   status: "ok", service: "MK Monitor",
   followedProjects: followedProjects.length,
