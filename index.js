@@ -1117,12 +1117,14 @@ async function runMonitor() {
   }
 
   // 最新の公募データをVolumeに保存（ダッシュボード表示用）
+  // ★ all（フィルタリング前）を保存してダッシュボードで全件表示
+  const allForSave = all.filter(n => n.title && n.title.trim().length > 3);
   const NOTICES_FILE = path.join(DATA_DIR, "last_notices.json");
   try {
     const saveData = {
       runAt: new Date().toISOString(),
-      count: deduped.length,
-      notices: deduped.map(n => ({
+      count: allForSave.length,
+      notices: allForSave.map(n => ({
         id: n._id || Math.random().toString(36).slice(2),
         title: n.title,
         source: n._source,
@@ -1143,7 +1145,7 @@ async function runMonitor() {
       }))
     };
     fs.writeFileSync(NOTICES_FILE, JSON.stringify(saveData, null, 2));
-    console.log(`💾 ${deduped.length}件の公募データを保存`);
+    console.log(`💾 ${allForSave.length}件の公募データを保存（フィルタリング前全件）`);
   } catch(e) { console.error("公募保存エラー:", e.message); }
 }
 
