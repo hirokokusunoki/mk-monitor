@@ -1014,10 +1014,20 @@ async function runMonitor() {
   const all = [...boamp,...ted,...simap,...doffin,...bustler,...archdaily,...riba,...japan,...middleEast,...museumInsider];
   console.log(`\n✅ 合計取得: ${all.length}件`);
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const scored = all
     .map(n=>({...n,_score:scoreNotice(n),_geo:detectGeo(n)}))
     // タイトルのない案件を除外
     .filter(n => n.title && n.title.trim().length > 3)
+    // ★ 締め切りが過去の案件を除外（締め切り不明は残す）
+    .filter(n => {
+      if (!n.deadline) return true; // 締め切り不明 → 残す
+      const dl = new Date(n.deadline);
+      if (isNaN(dl.getTime())) return true; // パース不能 → 残す
+      return dl >= today; // 今日以降のみ
+    })
     .filter(n=>{
       const b = parseBudget(n.budget);
       const geo = n._geo;
@@ -1325,80 +1335,106 @@ app.post("/follow/confirm", async (req, res) => {
 
 app.get("/dashboard", (req, res) => {
   const rows = followedProjects.length === 0
-    ? `<div style="text-align:center;padding:60px 0;color:#9ca3af;font-size:13px">No projects followed yet.</div>`
+    ? `<div class="mk-empty">Aucun projet en suivi</div>`
     : followedProjects.slice().reverse().map(p => {
         const date = new Date(p.followedAt).toLocaleDateString("en-GB", {day:"numeric",month:"short",year:"numeric"});
         return `
-        <div style="border:1px solid #e5e7eb;border-radius:4px;padding:16px 20px;margin-bottom:8px;background:white">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+        <div class="mk-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px">
             <div style="flex:1;min-width:0">
-              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-                <span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:3px;background:#dbeafe;color:#1d4ed8;letter-spacing:0.1em;text-transform:uppercase">${escapeHtml(p.source)}</span>
-                <span style="font-size:9px;padding:2px 7px;border-radius:3px;background:#d1fae5;color:#065f46">${escapeHtml(p.country||"")}</span>
+              <div class="mk-card-tags">
+                <span class="mk-tag">${escapeHtml(p.source)}</span>
+                ${p.country ? `<span class="mk-tag mk-tag-geo">${escapeHtml(p.country)}</span>` : ""}
               </div>
-              <div style="font-size:14px;font-weight:500;color:#111827;line-height:1.4;margin-bottom:4px">${escapeHtml(p.title)}</div>
-              <div style="font-size:11px;color:#9ca3af">${escapeHtml(p.acheteur||"")}</div>
+              <div class="mk-card-title">${escapeHtml(p.title)}</div>
+              <div class="mk-card-client">${escapeHtml(p.acheteur||"")}</div>
             </div>
             <div style="text-align:right;flex-shrink:0">
-              <div style="font-size:13px;font-weight:600;color:#111827;font-family:monospace">${escapeHtml(p.budget)}</div>
-              <div style="font-size:10px;color:#9ca3af;margin-top:2px">Added ${date}</div>
+              <div class="mk-card-budget">${escapeHtml(p.budget)}</div>
+              <div class="mk-card-meta">Ajouté le ${date}</div>
             </div>
           </div>
-          <div style="margin-top:12px;padding-top:10px;border-top:1px solid #f3f4f6;display:flex;justify-content:space-between;align-items:center">
-            <div style="font-size:11px">
-              <span style="color:#6b7280">Assigned to:</span>
-              <span style="font-weight:600;color:#0284c7;margin-left:6px">${escapeHtml(p.assignedTo)}</span>
+          <div class="mk-card-footer">
+            <div class="mk-card-assigned">
+              Responsable : <strong>${escapeHtml(p.assignedTo)}</strong>
             </div>
-            <div style="display:flex;gap:12px;align-items:center">
-              <a href="${escapeHtml(p.url)}" target="_blank" style="font-size:11px;color:#2563eb;text-decoration:none">→ View dossier ↗</a>
-              <a href="/team-builder?noticeId=${encodeURIComponent(p.id||p.title)}&noticeTitle=${encodeURIComponent(p.title)}&noticeUrl=${encodeURIComponent(p.url)}" style="font-size:11px;color:#059669;text-decoration:none;font-weight:600">👥 Constituer l'équipe</a>
+            <div class="mk-card-links">
+              <a href="/team-builder?noticeId=${encodeURIComponent(p.id||p.title)}&noticeTitle=${encodeURIComponent(p.title)}&noticeUrl=${encodeURIComponent(p.url)}" class="primary">Constituer l'equipe</a>
+              <a href="${escapeHtml(p.url)}" target="_blank">Voir le dossier</a>
             </div>
           </div>
         </div>`;
       }).join("");
 
   res.send(`<!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MK Monitor — Followed Projects</title>
+<title>Moreau Kusunoki — Monitor</title>
 <style>
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:'Helvetica Neue',Helvetica,Arial,sans-serif; background:#f0efed; min-height:100vh; }
-  .header { background:#0f172a; padding:20px 32px; }
-  .header-sub { font-size:9px; color:#475569; letter-spacing:0.2em; text-transform:uppercase; margin-bottom:6px; }
-  .header-title { font-size:18px; font-weight:300; color:#f1f5f9; letter-spacing:0.15em; text-transform:uppercase; }
-  .header-count { font-size:11px; color:#64748b; margin-top:4px; }
-  .content { max-width:800px; margin:0 auto; padding:24px 32px; }
-  .nav-bar { background:#1e293b; border-bottom:1px solid #0f172a; }
-  .nav-inner { max-width:800px; margin:0 auto; padding:0 32px; display:flex; gap:0; }
-  .nav-link { font-size:9px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase; color:#64748b; text-decoration:none; padding:11px 16px 10px; border-bottom:2px solid transparent; display:inline-block; }
-  .nav-link:hover { color:#94a3b8; }
-  .nav-link.active { color:#f1f5f9; border-bottom-color:#3b82f6; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;background:#D9D8D6;min-height:100vh}
+
+  .mk-header{background:#ffffff;border-bottom:1px solid #c4c3c1;padding:28px 48px 0}
+  .mk-inner{max-width:900px;margin:0 auto}
+  .mk-wordmark{font-size:26px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:#1a1a1a;line-height:1}
+  .mk-sub{font-size:8px;font-weight:400;letter-spacing:0.28em;text-transform:uppercase;color:#676867;margin-top:6px}
+  .mk-nav{display:flex;margin-top:22px}
+  .mk-nav a{font-size:8px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#676867;text-decoration:none;padding:9px 32px 9px 0;border-bottom:2px solid transparent}
+  .mk-nav a:hover{color:#1a1a1a}
+  .mk-nav a.active{color:#0016B4;border-bottom-color:#0016B4}
+
+  .mk-band{background:#676867;padding:9px 48px}
+  .mk-band-inner{max-width:900px;margin:0 auto;font-size:8px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#D9D8D6}
+
+  .mk-body{max-width:900px;margin:0 auto;padding:32px 48px}
+  .mk-label{font-size:8px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#676867;border-bottom:1px solid #b8b7b5;padding-bottom:8px;margin-bottom:24px}
+
+  .mk-card{background:#ffffff;border:1px solid #c4c3c1;margin-bottom:6px;padding:20px 24px}
+  .mk-card-tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+  .mk-tag{font-size:8px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;padding:2px 8px;background:#1a1a1a;color:#ffffff}
+  .mk-tag-geo{background:#D9D8D6;color:#676867}
+  .mk-tag-type{background:#0016B4;color:#ffffff}
+  .mk-card-title{font-size:14px;font-weight:700;letter-spacing:0.02em;color:#1a1a1a;line-height:1.35;margin-bottom:3px}
+  .mk-card-client{font-size:10px;color:#676867;letter-spacing:0.05em}
+  .mk-card-budget{font-size:14px;font-weight:700;font-family:Arial,sans-serif;color:#1a1a1a}
+  .mk-card-meta{font-size:9px;color:#676867;margin-top:2px}
+  .mk-card-footer{margin-top:14px;padding-top:12px;border-top:1px solid #e8e7e5;display:flex;justify-content:space-between;align-items:center}
+  .mk-card-assigned{font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:#676867}
+  .mk-card-assigned strong{color:#0016B4}
+  .mk-card-links{display:flex;gap:16px}
+  .mk-card-links a{font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;text-decoration:none;color:#676867}
+  .mk-card-links a:hover{color:#0016B4}
+  .mk-card-links a.primary{color:#0016B4}
+
+  .mk-empty{text-align:center;padding:80px 0;color:#676867;font-size:11px;letter-spacing:0.15em;text-transform:uppercase}
 </style>
 </head>
 <body>
-  <div class="header">
-    <div style="max-width:800px;margin:0 auto">
-      <div class="header-sub">Moreau Kusunoki Architectes — MK Monitor</div>
-      <div class="header-title">🔔 Followed Projects</div>
-      <div class="header-count">${followedProjects.length} project${followedProjects.length!==1?"s":""} in follow-up</div>
-    </div>
+
+<div class="mk-header">
+  <div class="mk-inner">
+    <div class="mk-wordmark">Moreau Kusunoki</div>
+    <div class="mk-sub">Architectes &mdash; MK Monitor</div>
+    <nav class="mk-nav">
+      <a href="/dashboard" class="active">Projets suivis</a>
+      <a href="/partners">Partner DB</a>
+    </nav>
   </div>
-  <div class="nav-bar">
-    <div class="nav-inner">
-      <a href="/dashboard" class="nav-link active">🔔 Projets suivis</a>
-      <a href="/partners" class="nav-link">🗃 Partner DB</a>
-    </div>
+</div>
+
+<div class="mk-band">
+  <div class="mk-band-inner">
+    ${followedProjects.length} projet${followedProjects.length!==1?"s":""} en suivi
   </div>
-  <div class="content">
-    ${rows}
-    <div style="margin-top:24px;font-size:10px;color:#9ca3af;text-align:center;line-height:1.7">
-      Note: This list resets when the server restarts.<br>
-      Each follow-up triggers an email notification to the full team.
-    </div>
-  </div>
+</div>
+
+<div class="mk-body">
+  <div class="mk-label">Projets suivis</div>
+  ${rows}
+</div>
+
 </body>
 </html>`);
 });
