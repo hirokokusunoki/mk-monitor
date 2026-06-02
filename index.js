@@ -1097,6 +1097,36 @@ async function runMonitor() {
     if (error) console.error(`❌ ${groupName}:`,error);
     else       console.log(`✅ ${groupName} 送信完了`);
   }
+
+  // 最新の公募データをVolumeに保存（ダッシュボード表示用）
+  const NOTICES_FILE = path.join(DATA_DIR, "last_notices.json");
+  try {
+    const saveData = {
+      runAt: new Date().toISOString(),
+      count: deduped.length,
+      notices: deduped.map(n => ({
+        id: n._id || Math.random().toString(36).slice(2),
+        title: n.title,
+        source: n._source,
+        acheteur: n.acheteur,
+        budget: formatBudget(n.budget),
+        budgetRaw: n.budget,
+        country: n.country || n.region || "",
+        region: n.region || "",
+        procedure: n.procedure,
+        nature: n.nature,
+        date_pub: n.date_pub,
+        deadline: n.deadline,
+        url: n.url,
+        score: n._score,
+        geo: n._geo,
+        buildingType: detectBuildingType(n),
+        summary: n._summary || null,
+      }))
+    };
+    fs.writeFileSync(NOTICES_FILE, JSON.stringify(saveData, null, 2));
+    console.log(`💾 ${deduped.length}件の公募データを保存`);
+  } catch(e) { console.error("公募保存エラー:", e.message); }
 }
 
 // ─── フォローリンク生成 ────────────────────────────────────────────────────────
@@ -1334,15 +1364,66 @@ app.post("/follow/confirm", async (req, res) => {
 });
 
 app.get("/dashboard", (req, res) => {
-  const rows = followedProjects.length === 0
+  // MK共通CSS
+  const MK_CSS = `<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;background:#D9D8D6;min-height:100vh}
+  .mk-header{background:#fff;border-bottom:1px solid #c4c3c1;padding:28px 48px 0}
+  .mk-wordmark{font-size:26px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:#1a1a1a;line-height:1}
+  .mk-sub{font-size:8px;font-weight:400;letter-spacing:0.28em;text-transform:uppercase;color:#676867;margin-top:6px}
+  .mk-nav{display:flex;margin-top:22px}
+  .mk-nav a{font-size:8px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#676867;text-decoration:none;padding:9px 32px 9px 0;border-bottom:2px solid transparent}
+  .mk-nav a:hover{color:#1a1a1a}
+  .mk-nav a.active{color:#0016B4;border-bottom-color:#0016B4}
+  .mk-tabs{background:#fff;border-bottom:1px solid #c4c3c1;padding:0 48px}
+  .mk-tabs-inner{max-width:1100px;margin:0 auto;display:flex}
+  .mk-tab{font-size:9px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:#676867;padding:13px 24px 12px 0;margin-right:8px;border-bottom:2px solid transparent;cursor:pointer}
+  .mk-tab:hover{color:#1a1a1a}
+  .mk-tab.active{color:#0016B4;border-bottom-color:#0016B4}
+  .mk-band{background:#676867;padding:9px 48px}
+  .mk-band-inner{max-width:1100px;margin:0 auto;font-size:8px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#D9D8D6;display:flex;justify-content:space-between}
+  .mk-body{max-width:1100px;margin:0 auto;padding:28px 48px}
+  .mk-label{font-size:8px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#676867;border-bottom:1px solid #b8b7b5;padding-bottom:8px;margin-bottom:20px}
+  .mk-card{background:#fff;border:1px solid #c4c3c1;margin-bottom:6px;padding:18px 22px}
+  .mk-tag{font-size:8px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;padding:2px 7px;background:#1a1a1a;color:#fff;display:inline-block;margin-right:4px}
+  .mk-tag-geo{background:#D9D8D6;color:#676867}
+  .mk-tag-blue{background:#0016B4;color:#fff}
+  .mk-tag-red{background:#cc0000;color:#fff}
+  .mk-card-title{font-size:14px;font-weight:700;color:#1a1a1a;line-height:1.35;margin-bottom:3px}
+  .mk-card-client{font-size:10px;color:#676867}
+  .mk-card-footer{margin-top:12px;padding-top:10px;border-top:1px solid #eee;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+  .mk-assigned{font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:#676867}
+  .mk-assigned strong{color:#0016B4}
+  .mk-links{display:flex;gap:14px;align-items:center}
+  .mk-links a{font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;text-decoration:none;color:#676867}
+  .mk-links a:hover,.mk-links a.primary{color:#0016B4}
+  .mk-btn-remind{font-size:8px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;padding:5px 12px;border:1px solid #676867;background:#fff;color:#676867;cursor:pointer;font-family:Arial,sans-serif}
+  .mk-btn-remind:hover{background:#676867;color:#fff}
+  .mk-btn-remind.sent{background:#D9D8D6;color:#676867;border-color:#D9D8D6;cursor:default}
+  .mk-filters{background:#fff;border:1px solid #c4c3c1;padding:14px 18px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .mk-fg{display:flex;flex-direction:column;gap:4px}
+  .mk-fg label{font-size:8px;font-weight:700;color:#676867;letter-spacing:0.15em;text-transform:uppercase}
+  .mk-input,.mk-select{font-size:12px;padding:6px 9px;border:1px solid #c4c3c1;background:#fff;color:#1a1a1a;font-family:Arial,sans-serif;outline:none}
+  .mk-input:focus,.mk-select:focus{border-color:#0016B4}
+  .mk-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #c4c3c1;font-size:12px}
+  .mk-table th{background:#f5f4f2;font-size:8px;font-weight:700;color:#676867;letter-spacing:0.15em;text-transform:uppercase;padding:9px 12px;text-align:left;border-bottom:1px solid #c4c3c1}
+  .mk-table td{padding:10px 12px;border-bottom:1px solid #eee;vertical-align:top}
+  .mk-table tr:last-child td{border-bottom:none}
+  .mk-table tr:hover td{background:#fafaf9}
+  .mk-empty{text-align:center;padding:60px 0;color:#676867;font-size:9px;letter-spacing:0.2em;text-transform:uppercase}
+  .tab-panel{display:none}.tab-panel.active{display:block}
+</style>`;
+
+  // フォロー済みプロジェクトカード
+  const followedRows = followedProjects.length === 0
     ? `<div class="mk-empty">Aucun projet en suivi</div>`
     : followedProjects.slice().reverse().map(p => {
-        const date = new Date(p.followedAt).toLocaleDateString("en-GB", {day:"numeric",month:"short",year:"numeric"});
+        const date = new Date(p.followedAt).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});
         return `
         <div class="mk-card">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
             <div style="flex:1;min-width:0">
-              <div class="mk-card-tags">
+              <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px">
                 <span class="mk-tag">${escapeHtml(p.source)}</span>
                 ${p.country ? `<span class="mk-tag mk-tag-geo">${escapeHtml(p.country)}</span>` : ""}
               </div>
@@ -1350,16 +1431,17 @@ app.get("/dashboard", (req, res) => {
               <div class="mk-card-client">${escapeHtml(p.acheteur||"")}</div>
             </div>
             <div style="text-align:right;flex-shrink:0">
-              <div class="mk-card-budget">${escapeHtml(p.budget)}</div>
-              <div class="mk-card-meta">Ajouté le ${date}</div>
+              <div style="font-size:14px;font-weight:700;color:#1a1a1a">${escapeHtml(p.budget)}</div>
+              <div style="font-size:9px;color:#676867;margin-top:2px">Ajouté le ${date}</div>
             </div>
           </div>
           <div class="mk-card-footer">
-            <div class="mk-card-assigned">
+            <div class="mk-assigned">
               Responsable : <strong>${escapeHtml(p.assignedTo)}</strong>
             </div>
-            <div class="mk-card-links">
-              <a href="/team-builder?noticeId=${encodeURIComponent(p.id||p.title)}&noticeTitle=${encodeURIComponent(p.title)}&noticeUrl=${encodeURIComponent(p.url)}" class="primary">Constituer l'equipe</a>
+            <div class="mk-links">
+              <button class="mk-btn-remind" onclick="sendRemind('${p.id}', this)">Rapport requis →</button>
+              <a href="/team-builder?noticeId=${encodeURIComponent(p.id||p.title)}&noticeTitle=${encodeURIComponent(p.title)}&noticeUrl=${encodeURIComponent(p.url)}" class="primary">Constituer l'équipe</a>
               <a href="${escapeHtml(p.url)}" target="_blank">Voir le dossier</a>
             </div>
           </div>
@@ -1372,69 +1454,273 @@ app.get("/dashboard", (req, res) => {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Moreau Kusunoki — Monitor</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Arial,sans-serif;background:#D9D8D6;min-height:100vh}
-
-  .mk-header{background:#ffffff;border-bottom:1px solid #c4c3c1;padding:28px 48px 0}
-  .mk-inner{max-width:900px;margin:0 auto}
-  .mk-wordmark{font-size:26px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:#1a1a1a;line-height:1}
-  .mk-sub{font-size:8px;font-weight:400;letter-spacing:0.28em;text-transform:uppercase;color:#676867;margin-top:6px}
-  .mk-nav{display:flex;margin-top:22px}
-  .mk-nav a{font-size:8px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#676867;text-decoration:none;padding:9px 32px 9px 0;border-bottom:2px solid transparent}
-  .mk-nav a:hover{color:#1a1a1a}
-  .mk-nav a.active{color:#0016B4;border-bottom-color:#0016B4}
-
-  .mk-band{background:#676867;padding:9px 48px}
-  .mk-band-inner{max-width:900px;margin:0 auto;font-size:8px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#D9D8D6}
-
-  .mk-body{max-width:900px;margin:0 auto;padding:32px 48px}
-  .mk-label{font-size:8px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#676867;border-bottom:1px solid #b8b7b5;padding-bottom:8px;margin-bottom:24px}
-
-  .mk-card{background:#ffffff;border:1px solid #c4c3c1;margin-bottom:6px;padding:20px 24px}
-  .mk-card-tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
-  .mk-tag{font-size:8px;font-weight:700;letter-spacing:0.15em;text-transform:uppercase;padding:2px 8px;background:#1a1a1a;color:#ffffff}
-  .mk-tag-geo{background:#D9D8D6;color:#676867}
-  .mk-tag-type{background:#0016B4;color:#ffffff}
-  .mk-card-title{font-size:14px;font-weight:700;letter-spacing:0.02em;color:#1a1a1a;line-height:1.35;margin-bottom:3px}
-  .mk-card-client{font-size:10px;color:#676867;letter-spacing:0.05em}
-  .mk-card-budget{font-size:14px;font-weight:700;font-family:Arial,sans-serif;color:#1a1a1a}
-  .mk-card-meta{font-size:9px;color:#676867;margin-top:2px}
-  .mk-card-footer{margin-top:14px;padding-top:12px;border-top:1px solid #e8e7e5;display:flex;justify-content:space-between;align-items:center}
-  .mk-card-assigned{font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:#676867}
-  .mk-card-assigned strong{color:#0016B4}
-  .mk-card-links{display:flex;gap:16px}
-  .mk-card-links a{font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;text-decoration:none;color:#676867}
-  .mk-card-links a:hover{color:#0016B4}
-  .mk-card-links a.primary{color:#0016B4}
-
-  .mk-empty{text-align:center;padding:80px 0;color:#676867;font-size:11px;letter-spacing:0.15em;text-transform:uppercase}
-</style>
+${MK_CSS}
 </head>
 <body>
 
 <div class="mk-header">
-  <div class="mk-inner">
+  <div style="max-width:1100px;margin:0 auto">
     <div class="mk-wordmark">Moreau Kusunoki</div>
     <div class="mk-sub">Architectes &mdash; MK Monitor</div>
     <nav class="mk-nav">
-      <a href="/dashboard" class="active">Projets suivis</a>
+      <a href="/dashboard" class="active">Dashboard</a>
       <a href="/partners">Partner DB</a>
     </nav>
   </div>
 </div>
 
-<div class="mk-band">
-  <div class="mk-band-inner">
-    ${followedProjects.length} projet${followedProjects.length!==1?"s":""} en suivi
+<div class="mk-tabs">
+  <div class="mk-tabs-inner">
+    <div class="mk-tab active" onclick="switchTab('suivis', this)">Projets suivis (${followedProjects.length})</div>
+    <div class="mk-tab" onclick="switchTab('opportunites', this)">Toutes les opportunités</div>
   </div>
 </div>
 
-<div class="mk-body">
-  <div class="mk-label">Projets suivis</div>
-  ${rows}
+<!-- TAB 1: Projets suivis -->
+<div class="tab-panel active" id="tab-suivis">
+  <div class="mk-band">
+    <div class="mk-band-inner">
+      <span>${followedProjects.length} projet${followedProjects.length!==1?"s":""} en suivi</span>
+    </div>
+  </div>
+  <div class="mk-body">
+    <div class="mk-label">Projets suivis</div>
+    ${followedRows}
+  </div>
 </div>
 
+<!-- TAB 2: Toutes les opportunités -->
+<div class="tab-panel" id="tab-opportunites">
+  <div class="mk-band">
+    <div class="mk-band-inner">
+      <span id="opp-count">Chargement…</span>
+      <span id="opp-run"></span>
+    </div>
+  </div>
+  <div class="mk-body">
+    <div class="mk-label">Toutes les opportunités</div>
+
+    <div class="mk-filters">
+      <div class="mk-fg" style="flex:2;min-width:180px">
+        <label>Recherche</label>
+        <input id="f-q" class="mk-input" type="text" placeholder="Titre, maître d'ouvrage…" oninput="filterNotices()">
+      </div>
+      <div class="mk-fg">
+        <label>Pays</label>
+        <select id="f-country" class="mk-select" onchange="filterNotices()">
+          <option value="">Tous</option>
+        </select>
+      </div>
+      <div class="mk-fg">
+        <label>Type</label>
+        <select id="f-type" class="mk-select" onchange="filterNotices()">
+          <option value="">Tous</option>
+          <option value="Competition">Concours</option>
+          <option value="museum">Musée / Culture</option>
+          <option value="education">Éducation</option>
+          <option value="residential">Logement</option>
+          <option value="hospitality">Hôtellerie</option>
+          <option value="office">Bureaux</option>
+          <option value="infrastructure">Infrastructure</option>
+        </select>
+      </div>
+      <div class="mk-fg">
+        <label>Budget min.</label>
+        <select id="f-budget" class="mk-select" onchange="filterNotices()">
+          <option value="">Tous</option>
+          <option value="1000000">1M€ +</option>
+          <option value="5000000">5M€ +</option>
+          <option value="10000000">10M€ +</option>
+          <option value="50000000">50M€ +</option>
+        </select>
+      </div>
+      <div class="mk-fg">
+        <label>Échéance</label>
+        <select id="f-deadline" class="mk-select" onchange="filterNotices()">
+          <option value="">Toutes</option>
+          <option value="7">Dans 7 jours</option>
+          <option value="30">Dans 30 jours</option>
+          <option value="60">Dans 60 jours</option>
+          <option value="90">Dans 90 jours</option>
+        </select>
+      </div>
+      <div class="mk-fg">
+        <label>Source</label>
+        <select id="f-source" class="mk-select" onchange="filterNotices()">
+          <option value="">Toutes</option>
+        </select>
+      </div>
+      <button class="mk-input" style="align-self:flex-end;background:#D9D8D6;cursor:pointer;font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;white-space:nowrap" onclick="resetFilters()">Réinitialiser</button>
+    </div>
+
+    <div style="font-size:9px;color:#676867;letter-spacing:0.1em;margin-bottom:12px" id="opp-filter-count"></div>
+
+    <div style="overflow-x:auto">
+    <table class="mk-table">
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Titre</th>
+          <th>Maître d'ouvrage</th>
+          <th>Pays</th>
+          <th>Budget</th>
+          <th>Échéance</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="opp-tbody">
+        <tr><td colspan="7" class="mk-empty">Chargement…</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Tab switching ──
+function switchTab(name, el) {
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".mk-tab").forEach(t => t.classList.remove("active"));
+  document.getElementById("tab-" + name).classList.add("active");
+  el.classList.add("active");
+  if (name === "opportunites" && !window._noticesLoaded) loadNotices();
+}
+
+// ── Rappel email ──
+async function sendRemind(projectId, btn) {
+  if (btn.classList.contains("sent")) return;
+  btn.textContent = "Envoi…";
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/remind/" + projectId, { method: "POST" });
+    const data = await res.json();
+    if (data.ok) {
+      btn.textContent = "Envoyé";
+      btn.classList.add("sent");
+    } else {
+      btn.textContent = "Erreur";
+      btn.disabled = false;
+    }
+  } catch(e) {
+    btn.textContent = "Erreur";
+    btn.disabled = false;
+  }
+}
+
+// ── Toutes les opportunités ──
+let allNotices = [];
+
+async function loadNotices() {
+  window._noticesLoaded = true;
+  try {
+    const res = await fetch("/api/notices");
+    const data = await res.json();
+    allNotices = data.notices || [];
+
+    document.getElementById("opp-count").textContent =
+      allNotices.length + " opportunité" + (allNotices.length !== 1 ? "s" : "");
+    if (data.runAt) {
+      const d = new Date(data.runAt).toLocaleDateString("fr-FR", {day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit"});
+      document.getElementById("opp-run").textContent = "Mise à jour : " + d;
+    }
+
+    // Populate country filter
+    const countries = [...new Set(allNotices.map(n => n.country).filter(Boolean))].sort();
+    const countrySelect = document.getElementById("f-country");
+    countries.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c; opt.textContent = c;
+      countrySelect.appendChild(opt);
+    });
+
+    // Populate source filter
+    const sources = [...new Set(allNotices.map(n => n.source).filter(Boolean))].sort();
+    const sourceSelect = document.getElementById("f-source");
+    sources.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s; opt.textContent = s;
+      sourceSelect.appendChild(opt);
+    });
+
+    filterNotices();
+  } catch(e) {
+    document.getElementById("opp-count").textContent = "Aucune donnée";
+    document.getElementById("opp-tbody").innerHTML =
+      '<tr><td colspan="7" class="mk-empty">Aucune donnée — lancez /run pour générer un rapport</td></tr>';
+  }
+}
+
+function filterNotices() {
+  const q = document.getElementById("f-q").value.toLowerCase();
+  const country = document.getElementById("f-country").value;
+  const type = document.getElementById("f-type").value;
+  const budgetMin = parseFloat(document.getElementById("f-budget").value) || 0;
+  const deadlineDays = parseInt(document.getElementById("f-deadline").value) || 0;
+  const source = document.getElementById("f-source").value;
+  const now = new Date();
+
+  let filtered = allNotices.filter(n => {
+    if (q && !(n.title||"").toLowerCase().includes(q) && !(n.acheteur||"").toLowerCase().includes(q)) return false;
+    if (country && n.country !== country) return false;
+    if (type) {
+      if (type === "Competition" && n.procedure !== "Competition" && n.nature !== "Competition") return false;
+      if (type !== "Competition" && n.buildingType !== type) return false;
+    }
+    if (budgetMin && (parseFloat(n.budgetRaw)||0) < budgetMin) return false;
+    if (deadlineDays && n.deadline) {
+      const dl = new Date(n.deadline);
+      const diff = (dl - now) / (1000*60*60*24);
+      if (diff < 0 || diff > deadlineDays) return false;
+    }
+    if (source && n.source !== source) return false;
+    return true;
+  });
+
+  document.getElementById("opp-filter-count").textContent =
+    filtered.length + " résultat" + (filtered.length !== 1 ? "s" : "") + (filtered.length < allNotices.length ? " (filtré sur " + allNotices.length + ")" : "");
+
+  const tbody = document.getElementById("opp-tbody");
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="mk-empty">Aucun résultat</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.slice(0, 200).map(n => {
+    let deadline = '<span style="color:#c4c3c1">—</span>';
+    if (n.deadline) {
+      const dl = new Date(n.deadline);
+      const diff = Math.ceil((dl - now) / (1000*60*60*24));
+      const str = dl.toLocaleDateString("fr-FR",{day:"numeric",month:"short"});
+      const color = diff <= 7 ? "#cc0000" : diff <= 30 ? "#b45309" : "#1a1a1a";
+      deadline = '<span style="font-weight:700;color:' + color + '">' + str + '</span><span style="font-size:9px;color:#676867;display:block">' + diff + 'j</span>';
+    }
+
+    const isComp = n.procedure === "Competition" || n.nature === "Competition";
+    return '<tr>' +
+      '<td><span class="mk-tag" style="font-size:7px">' + esc(n.source) + '</span>' + (isComp ? '<br><span class="mk-tag mk-tag-blue" style="font-size:7px;margin-top:3px">Concours</span>' : '') + '</td>' +
+      '<td style="font-size:12px;font-weight:700;color:#1a1a1a;max-width:340px">' + esc(n.title) + '<div style="font-size:10px;font-weight:400;color:#676867;margin-top:2px">' + esc(n.acheteur||"") + '</div></td>' +
+      '<td style="font-size:11px;color:#676867">' + esc(n.acheteur||"") + '</td>' +
+      '<td style="font-size:11px">' + esc(n.country||"") + '</td>' +
+      '<td style="font-size:12px;font-weight:700">' + esc(n.budget||"—") + '</td>' +
+      '<td style="font-size:11px">' + deadline + '</td>' +
+      '<td><a href="' + esc(n.url) + '" target="_blank" style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#0016B4;text-decoration:none">Voir →</a></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function resetFilters() {
+  ["f-q","f-country","f-type","f-budget","f-deadline","f-source"].forEach(id => {
+    const el = document.getElementById(id);
+    el.value = id === "f-q" ? "" : "";
+  });
+  filterNotices();
+}
+
+function esc(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+</script>
 </body>
 </html>`);
 });
