@@ -84,6 +84,21 @@ function esc(s) {
 
 // ─── ルート登録 ─────────────────────────────────────────────────────────────────
 
+// ── MK共通デザイン定数 ──────────────────────────────────────────────────────────
+const MK_CSS = `${MK_CSS}`;
+
+function mkHeader(active) {
+  const da = active === "dashboard" ? ' class="active"' : '';
+  const pa = active === "partners" ? ' class="active"' : '';
+  return '<div class="mk-header"><div style="max-width:1100px;margin:0 auto">' +
+    '<div class="mk-wordmark">Moreau Kusunoki</div>' +
+    '<div class="mk-sub">Architectes &mdash; MK Monitor</div>' +
+    '<nav class="mk-nav">' +
+    '<a href="/dashboard"' + da + '>Dashboard</a>' +
+    '<a href="/partners"' + pa + '>Partner DB</a>' +
+    '</nav></div></div>';
+}
+
 module.exports = function(app) {
 
   // ── API: パートナー検索 ────────────────────────────────────────────────────────
@@ -202,16 +217,7 @@ module.exports = function(app) {
 </style>
 </head>
 <body>
-<div class="header">
-  <div style="max-width:1100px;margin:0 auto">
-    <div class="header-firm">Moreau Kusunoki</div>
-    <div class="header-sub">Architectes &nbsp;—&nbsp; MK Monitor</div>
-    <div class="nav">
-      <a href="/dashboard" class="nav-link">Projets suivis</a>
-      <a href="/partners" class="nav-link active">Partner DB</a>
-    </div>
-  </div>
-</div>
+${mkHeader("partners")}
 
 <div class="content">
   <div class="filters">
@@ -514,16 +520,7 @@ doSearch();
 </style>
 </head>
 <body>
-<div class="header">
-  <div style="max-width:1200px;margin:0 auto">
-    <div class="header-firm">Moreau Kusunoki</div>
-    <div class="header-sub">Architectes &nbsp;—&nbsp; MK Monitor</div>
-    <div class="nav">
-      <a href="/dashboard" class="nav-link">Projets suivis</a>
-      <a href="/partners" class="nav-link">Partner DB</a>
-    </div>
-  </div>
-</div>
+${mkHeader("dashboard")}
 <div class="notice-bar">
   <span style="color:#64748b">Opération :</span>
   <span style="color:#e2e8f0;font-weight:500">${esc(noticeTitle || "— Sans titre —")}</span>
