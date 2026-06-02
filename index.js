@@ -393,6 +393,34 @@ async function fetchBOAMP() {
 
 // ─── TED APIヘルパー（v3 POST、fieldsなし） ──────────────────────────────────
 
+// TED RSS feeds by CPV code
+async function fetchTEDFeed(cpv, label) {
+  const url = `https://ted.europa.eu/TED_RSSS/rss/ted-daily-view/cpv/${cpv}`;
+  const res = await safeFetch(url, {}, `TED-${cpv}`);
+  if (!res) return [];
+  const xml = await res.text();
+  return parseRSS(xml, "TED/OJEU", (get) => {
+    const title = get("title");
+    if (!title || title.length < 3) return null;
+    return {
+      _id: `ted-${cpv}-${Math.random()}`,
+      _source: "TED/OJEU",
+      title: cleanText(title),
+      description: cleanText(get("description").replace(/<[^>]*>/g,"").slice(0,400)),
+      acheteur: get("dc:creator") || get("author") || "",
+      budget: null,
+      date_pub: get("pubDate"),
+      deadline: null,
+      country: label || "Europe",
+      region: label || "Europe",
+      cpv: String(cpv),
+      procedure: "Tender",
+      nature: "Tender",
+      url: get("link") || "https://ted.europa.eu",
+    };
+  });
+}
+
 async function tedSearch(query, limit=30) {
   // fieldsを省略して試行（空もNG、無効名もNG → 省略）
   // TED API v3 requires "fields" to not be empty
@@ -400,7 +428,7 @@ async function tedSearch(query, limit=30) {
     query,
     page: 1,
     limit,
-    fields: ["ND","TI","DS","CY","CPV","AU","TVH","DT","DD","PD","MA","PR","RP","RC"],
+    fields: ["submission-url-lot","organisation-city-serv-prov","sme-part"],
   };
   try {
     const res = await fetch("https://api.ted.europa.eu/v3/notices/search", {
@@ -467,23 +495,20 @@ function mapTEDNotice(n, source="TED/OJEU", countryOverride=null) {
 
 async function fetchTED() {
   console.log("📡 TED/OJEU...");
-  const allResults = [];
-  const searches = [
-    "architect museum library theatre concert hall cultural",
-    "school university campus education hotel airport station",
-    "musée bibliothèque théâtre école université hôtel gare",
+  // CPVコード別RSSフィード（APIより安定）
+  const feeds = [
+    { cpv: "71200000", label: "Europe" },  // Architectural services
+    { cpv: "71220000", label: "Europe" },  // Architectural design services
+    { cpv: "71221000", label: "Europe" },  // Architectural services for buildings
+    { cpv: "45210000", label: "Europe" },  // Building construction work
+    { cpv: "92000000", label: "Europe" },  // Cultural services
   ];
-  for (const q of searches) {
-    const res = await tedSearch(q, 25);
-    if (!res) continue;
-    try {
-      const data = JSON.parse(res._text);
-      const notices = data.notices||data.results||data.items||[];
-      const items = notices.map(n=>mapTEDNotice(n,"TED/OJEU")).filter(Boolean);
-      allResults.push(...items);
-    } catch(e) { console.error("TED parse:", e.message); }
+  const allResults = [];
+  for (const { cpv, label } of feeds) {
+    const items = await fetchTEDFeed(cpv, label);
+    allResults.push(...items);
   }
-  const unique = allResults.filter((n,i,arr)=>arr.findIndex(x=>x._id===n._id)===i);
+  const unique = allResults.filter((n,i,arr)=>arr.findIndex(x=>x.title===n.title)===i);
   console.log(`  ✅ TED: ${unique.length}件`);
   return unique;
 }
@@ -492,38 +517,75 @@ async function fetchTED() {
 
 async function fetchSIMAP() {
   console.log("📡 SIMAP (Switzerland)...");
-  const res = await tedSearch("architect museum library school hotel Switzerland", 20);
-  if (!res) return [];
-  try {
-    const data = JSON.parse(res._text||"{}");
-    const items = (data.notices||[])
-      .filter(n => {
-        const country = n.country||"";
-        return Array.isArray(country) ? country.includes("CH") : country==="CH";
-      })
-      .map(n=>mapTEDNotice(n,"SIMAP","Switzerland")).filter(Boolean);
-    console.log(`  ✅ SIMAP: ${items.length}件`);
-    return items;
-  } catch(e) { return []; }
+  // SIMAPはsimap.ch直接、またはTEDのCH向けフィード
+  const urls = [
+    "https://www.simap.ch/shabforms/COMMON/application/applicationGrid.do?method=display&feed=true",
+    "https://ted.europa.eu/TED_RSSS/rss/ted-daily-view/cpv/71200000/country/CH",
+    "https://ted.europa.eu/TED_RSSS/rss/ted-daily-view/cpv/71220000/country/CH",
+  ];
+  const allItems = [];
+  for (const url of urls) {
+    const res = await safeFetch(url, {}, "SIMAP");
+    if (!res) continue;
+    const xml = await res.text();
+    const items = parseRSS(xml, "SIMAP", (get) => {
+      const title = get("title");
+      if (!title || title.length < 3) return null;
+      return {
+        _id: `simap-${Math.random()}`,
+        _source: "SIMAP",
+        title: cleanText(title),
+        description: cleanText(get("description").replace(/<[^>]*>/g,"").slice(0,400)),
+        acheteur: get("dc:creator") || "",
+        budget: null,
+        date_pub: get("pubDate"),
+        deadline: null,
+        country: "Switzerland", region: "Switzerland",
+        cpv: "71200000", procedure: "Tender", nature: "Tender",
+        url: get("link") || "https://www.simap.ch",
+      };
+    });
+    if (items.length > 0) { allItems.push(...items); break; }
+  }
+  console.log(`  ✅ SIMAP: ${allItems.length}件`);
+  return allItems;
 }
 
 // ─── Doffin（ノルウェー：TED経由） ───────────────────────────────────────────
 
 async function fetchDoffin() {
   console.log("📡 Doffin (Norway)...");
-  const res = await tedSearch("architect museum library school hotel Norway Norge", 20);
-  if (!res) return [];
-  try {
-    const data = JSON.parse(res._text||"{}");
-    const items = (data.notices||[])
-      .filter(n => {
-        const country = n.country||"";
-        return Array.isArray(country) ? country.includes("NO") : country==="NO";
-      })
-      .map(n=>mapTEDNotice(n,"Doffin","Norway")).filter(Boolean);
-    console.log(`  ✅ Doffin: ${items.length}件`);
-    return items;
-  } catch(e) { return []; }
+  const urls = [
+    "https://ted.europa.eu/TED_RSSS/rss/ted-daily-view/cpv/71200000/country/NO",
+    "https://ted.europa.eu/TED_RSSS/rss/ted-daily-view/cpv/71220000/country/NO",
+    "https://kgv.doffin.no/en/notice/rss",
+  ];
+  const allItems = [];
+  for (const url of urls) {
+    const res = await safeFetch(url, {}, "Doffin");
+    if (!res) continue;
+    const xml = await res.text();
+    const items = parseRSS(xml, "Doffin", (get) => {
+      const title = get("title");
+      if (!title || title.length < 3) return null;
+      return {
+        _id: `doffin-${Math.random()}`,
+        _source: "Doffin",
+        title: cleanText(title),
+        description: cleanText(get("description").replace(/<[^>]*>/g,"").slice(0,400)),
+        acheteur: get("dc:creator") || "",
+        budget: null,
+        date_pub: get("pubDate"),
+        deadline: null,
+        country: "Norway", region: "Norway",
+        cpv: "71200000", procedure: "Tender", nature: "Tender",
+        url: get("link") || "https://kgv.doffin.no",
+      };
+    });
+    if (items.length > 0) { allItems.push(...items); break; }
+  }
+  console.log(`  ✅ Doffin: ${allItems.length}件`);
+  return allItems;
 }
 
 // ─── Bustler ──────────────────────────────────────────────────────────────────
@@ -652,30 +714,13 @@ async function fetchMiddleEast() {
   console.log("📡 Middle East...");
   const allResults = [];
 
-  // RCU AlUla（RSS試行 - DNS失敗の場合スキップ）
-  for (const url of [
-      "https://rcualula.gov.sa/en/feed/",
-      "https://rcualula.gov.sa/feed/",
-      "https://www.rcualula.gov.sa/wp/feed/",
-      "https://rcualula.gov.sa/en/news/feed/",
-    ]) {
-    const res = await safeFetch(url,{},"RCU AlUla");
-    if (!res) continue;
-    const xml = await res.text();
-    const items = parseRSS(xml,"RCU AlUla",(get)=>({
-      _id:`rcu-${Math.random()}`, title:get("title"),
-      description:cleanText(get("description"),400),
-      acheteur:"Royal Commission for AlUla (RCU)", budget:null,
-      date_pub:get("pubDate"), deadline:null,
-      country:"Saudi Arabia", region:"AlUla", cpv:"71200000",
-      procedure:"Competition", nature:"Competition",
-      url:get("link")||"https://www.rcualula.gov.sa",
-    }));
-    if (items.length>0) { console.log(`  ✅ RCU AlUla: ${items.length}件`); allResults.push(...items); break; }
-  }
+  // RCU AlUla → ドメイン消滅のためスキップ（2026年6月確認）
+  // 代替: Saudi Vision 2030プロジェクトはTED Gulf経由でカバー
 
-  // NEOM（RSS試行）
-  const neomRes = await safeFetch("https://www.neom.com/en-us/feed/",{},"NEOM");
+  // NEOM（複数URLを試行）
+  const neomRes = await safeFetch("https://www.neom.com/en-us/media/news/feed",{},"NEOM") ||
+                  await safeFetch("https://www.neom.com/en-us/rss.xml",{},"NEOM") ||
+                  await safeFetch("https://www.neom.com/feed",{},"NEOM");
   if (neomRes) {
     const xml = await neomRes.text();
     const kw = ["architecture","design","competition","tender","construction","cultural","architect","hotel","hospitality"];
@@ -688,18 +733,19 @@ async function fetchMiddleEast() {
     allResults.push(...items);
   }
 
-  // Gulf TED（POST経由）
-  const gulfRes = await tedSearch("architect museum cultural hotel Saudi Arabia UAE Qatar Kuwait Bahrain Oman", 15);
-  if (gulfRes) {
-    try {
-      const data = await gulfRes.json();
-      const gulfCountries = ["SA","AE","QA","BH","KW","OM"];
-      const items = (data.notices||[])
-        .filter(n => gulfCountries.some(c => String(n.country||"").includes(c)))
-        .map(n=>mapTEDNotice(n,"Gulf Procurement")).filter(Boolean);
-      console.log(`  ✅ Gulf (TED): ${items.length}件`);
-      allResults.push(...items);
-    } catch(e) {}
+  // Gulf TED（RSSフィード経由）
+  const gulfCpvs = ["71200000","71220000","45210000"];
+  const gulfCountries = ["SA","AE","QA","BH","KW","OM"];
+  for (const cpv of gulfCpvs) {
+    for (const cc of gulfCountries) {
+      const items = await fetchTEDFeed(cpv, cc === "SA" ? "Saudi Arabia" : cc === "AE" ? "UAE" : cc === "QA" ? "Qatar" : cc);
+      // フィルタリングはURL内のcountryパラメーターで行う
+      const gulfItems = items.filter(n => n.title && n.title.length > 3);
+      if (gulfItems.length > 0) {
+        console.log(`  ✅ Gulf TED (${cpv}/${cc}): ${gulfItems.length}件`);
+        allResults.push(...gulfItems);
+      }
+    }
   }
 
   return allResults;
