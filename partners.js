@@ -85,7 +85,6 @@ function esc(s) {
 // ─── ルート登録 ─────────────────────────────────────────────────────────────────
 
 // ── MK共通デザイン定数 ──────────────────────────────────────────────────────────
-const MK_CSS = `${MK_CSS}`;
 
 function mkHeader(active) {
   const da = active === "dashboard" ? ' class="active"' : '';
@@ -98,6 +97,48 @@ function mkHeader(active) {
     '<a href="/partners"' + pa + '>Partner DB</a>' +
     '</nav></div></div>';
 }
+
+// ── MK共通デザイン定数 ──────────────────────────────────────────────────────────
+const MK_CSS = `<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;background:#D9D8D6;min-height:100vh}
+  .mk-header{background:#fff;border-bottom:1px solid #c4c3c1;padding:28px 48px 0}
+  .mk-wordmark{font-size:26px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:#1a1a1a;line-height:1}
+  .mk-sub{font-size:8px;font-weight:400;letter-spacing:0.28em;text-transform:uppercase;color:#676867;margin-top:6px}
+  .mk-nav{display:flex;margin-top:22px}
+  .mk-nav a{font-size:8px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#676867;text-decoration:none;padding:9px 32px 9px 0;border-bottom:2px solid transparent}
+  .mk-nav a:hover{color:#1a1a1a}
+  .mk-nav a.active{color:#0016B4;border-bottom-color:#0016B4}
+  .mk-band{background:#676867;padding:9px 48px}
+  .mk-band-inner{max-width:1100px;margin:0 auto;font-size:8px;font-weight:700;letter-spacing:0.22em;text-transform:uppercase;color:#D9D8D6}
+  .mk-body{max-width:1100px;margin:0 auto;padding:32px 48px}
+  .mk-label{font-size:8px;font-weight:700;letter-spacing:0.25em;text-transform:uppercase;color:#676867;border-bottom:1px solid #b8b7b5;padding-bottom:8px;margin-bottom:20px}
+  .mk-filters{background:#fff;border:1px solid #c4c3c1;padding:14px 18px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .mk-fg{display:flex;flex-direction:column;gap:4px}
+  .mk-fg label{font-size:8px;font-weight:700;color:#676867;letter-spacing:0.15em;text-transform:uppercase}
+  .mk-input{font-size:12px;padding:6px 9px;border:1px solid #c4c3c1;background:#fff;color:#1a1a1a;font-family:Arial,sans-serif;outline:none}
+  .mk-input:focus{border-color:#0016B4}
+  .mk-select{font-size:12px;padding:6px 9px;border:1px solid #c4c3c1;background:#fff;color:#1a1a1a;font-family:Arial,sans-serif;outline:none}
+  .mk-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #c4c3c1;font-size:12px}
+  .mk-table th{background:#f5f4f2;font-size:8px;font-weight:700;color:#676867;letter-spacing:0.15em;text-transform:uppercase;padding:9px 12px;text-align:left;border-bottom:1px solid #c4c3c1}
+  .mk-table td{padding:10px 12px;border-bottom:1px solid #eee;vertical-align:top;color:#1a1a1a}
+  .mk-table tr:last-child td{border-bottom:none}
+  .mk-table tr:hover td{background:#fafaf9}
+  .mk-btn{font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;padding:6px 14px;border:none;cursor:pointer;font-family:Arial,sans-serif}
+  .mk-btn-primary{background:#1a1a1a;color:#fff}.mk-btn-primary:hover{background:#0016B4}
+  .mk-btn-ghost{background:#D9D8D6;color:#676867;border:1px solid #c4c3c1}.mk-btn-ghost:hover{background:#c4c3c1}
+  .mk-btn-sm{font-size:8px;padding:4px 9px}
+  .mk-empty{text-align:center;padding:60px 0;color:#676867;font-size:9px;letter-spacing:0.2em;text-transform:uppercase}
+  .mk-warn{background:#fff0f0;border-left:3px solid #cc0000;padding:5px 9px;font-size:9px;color:#cc0000;margin-top:5px;font-weight:700}
+  .mk-note{background:#f0f4ff;border-left:3px solid #0016B4;padding:5px 9px;font-size:9px;color:#0016B4;margin-top:5px}
+  .mk-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:center;justify-content:center}
+  .mk-modal.open{display:flex}
+  .mk-modal-box{background:#fff;border:1px solid #c4c3c1;padding:28px;max-width:500px;width:90%;max-height:85vh;overflow-y:auto}
+  .mk-modal-title{font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#1a1a1a;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #c4c3c1}
+  .mk-field{margin-bottom:12px}
+  .mk-field label{display:block;font-size:8px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:#676867;margin-bottom:4px}
+  .mk-score-bar{display:inline-block;height:3px;background:#0016B4;min-width:2px}
+</style>`;
 
 module.exports = function(app) {
 
