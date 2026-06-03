@@ -1186,12 +1186,20 @@ async function runMonitor() {
     .map(n=>({...n,_score:scoreNotice(n),_geo:detectGeo(n)}))
     // タイトルのない案件を除外
     .filter(n => n.title && n.title.trim().length > 3)
-    // ★ 締め切りが過去の案件を除外（締め切り不明は残す）
+    // ★ 期限切れ・古すぎる案件を除外
     .filter(n => {
-      if (!n.deadline) return true; // 締め切り不明 → 残す
-      const dl = new Date(n.deadline);
-      if (isNaN(dl.getTime())) return true; // パース不能 → 残す
-      return dl >= today; // 今日以降のみ
+      // 締め切りが過去 → 除外
+      if (n.deadline) {
+        const dl = new Date(n.deadline);
+        if (!isNaN(dl.getTime()) && dl < today) return false;
+      }
+      // 公開日が180日以上前 AND 締め切り不明 → 除外（古いデータ）
+      if (n.date_pub && !n.deadline) {
+        const pub = new Date(n.date_pub);
+        const daysSince = (today - pub) / (1000 * 60 * 60 * 24);
+        if (!isNaN(pub.getTime()) && daysSince > 180) return false;
+      }
+      return true;
     })
     .filter(n=>{
       const b = parseBudget(n.budget);
@@ -1280,7 +1288,22 @@ async function runMonitor() {
 
   // 最新の公募データをVolumeに保存（ダッシュボード表示用）
   // ★ all（フィルタリング前）を保存してダッシュボードで全件表示
-  const allForSave = all.filter(n => n.title && n.title.trim().length > 3);
+  const todayTs = new Date(); todayTs.setHours(0,0,0,0);
+  const allForSave = all.filter(n => {
+    if (!n.title || n.title.trim().length < 3) return false;
+    // 締め切り過去 → 除外
+    if (n.deadline) {
+      const dl = new Date(n.deadline);
+      if (!isNaN(dl.getTime()) && dl < todayTs) return false;
+    }
+    // 180日以上前の公開 + 締め切り不明 → 除外
+    if (n.date_pub && !n.deadline) {
+      const pub = new Date(n.date_pub);
+      const days = (todayTs - pub) / (1000*60*60*24);
+      if (!isNaN(pub.getTime()) && days > 180) return false;
+    }
+    return true;
+  });
   const NOTICES_FILE = path.join(DATA_DIR, "last_notices.json");
   try {
     const saveData = {
@@ -1752,11 +1775,12 @@ ${MK_CSS}
     <table class="mk-table">
       <thead>
         <tr>
-          <th style="width:80px">Source</th>
-          <th>Titre / Détails / Équipe requise</th>
+          <th style="width:70px">Source</th>
+          <th>Titre &amp; Informations</th>
+          <th>Maître d'ouvrage</th>
+          <th>Dates</th>
           <th>Budget</th>
-          <th>Échéance</th>
-          <th style="width:60px"></th>
+          <th style="width:55px"></th>
         </tr>
       </thead>
       <tbody id="opp-tbody">
@@ -1887,7 +1911,24 @@ function filterNotices() {
     }
 
     const isComp = n.procedure === "Competition" || n.nature === "Competition";
-    // 詳細情報パネル
+    // ── 日付表示 ──
+    const fmtDate = (d) => {
+      if (!d) return null;
+      const dt = new Date(d);
+      if (isNaN(dt.getTime())) return null;
+      return dt.toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});
+    };
+    const pubDate = fmtDate(n.date_pub);
+    const dlDate  = fmtDate(n.deadline);
+    const now2 = new Date();
+    const dlDays  = n.deadline ? Math.ceil((new Date(n.deadline)-now2)/(1000*60*60*24)) : null;
+    const dlColor = dlDays !== null ? (dlDays<=14?"#cc0000":dlDays<=30?"#b45309":"#1a1a1a") : "#676867";
+
+    const datesHtml =
+      (pubDate ? '<div style="font-size:9px;color:#676867;margin-bottom:4px">Publication<br><span style="color:#1a1a1a;font-weight:700">' + pubDate + '</span></div>' : '') +
+      (dlDate  ? '<div style="font-size:9px;color:' + dlColor + '">Date limite<br><span style="font-weight:700">' + dlDate + '</span>' + (dlDays!==null ? '<span style="font-size:8px;color:'+dlColor+';display:block">J−' + dlDays + '</span>' : '') + '</div>' : '<div style="font-size:9px;color:#c4c3c1">Date limite<br>—</div>');
+
+    // ── 専門家・AMO ──
     const specs = (n.specialites_requises||[]).map(s =>
       '<span style="font-size:8px;background:#f0f4ff;color:#0016B4;padding:1px 6px;margin-right:3px;margin-bottom:2px;display:inline-block">' + esc(s) + '</span>'
     ).join("");
@@ -1899,19 +1940,46 @@ function filterNotices() {
       n.nb_candidats_max ? '<span style="font-size:9px;color:#676867">Candidats max : <strong style="color:#1a1a1a">' + n.nb_candidats_max + '</strong></span>' : null,
     ].filter(Boolean).join('<span style="color:#c4c3c1;margin:0 6px">|</span>');
 
-    return '<tr>' +
-      '<td style="vertical-align:top"><span class="mk-tag" style="font-size:7px">' + esc(n.source) + '</span>' + (isComp ? '<br><span class="mk-tag mk-tag-blue" style="font-size:7px;margin-top:3px">Concours</span>' : '') + (n.enriched ? '<br><span style="font-size:7px;color:#22c55e;margin-top:2px;display:block">● Analysé</span>' : '') + '</td>' +
-      '<td style="max-width:360px"><div style="font-size:12px;font-weight:700;color:#1a1a1a;line-height:1.3">' + esc(n.title) + '</div>' +
-        '<div style="font-size:10px;color:#676867;margin-top:2px">' + esc(n.acheteur||"") + (n.country ? ' · ' + esc(n.country) : '') + '</div>' +
-        (details ? '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">' + details + '</div>' : '') +
-        (specs ? '<div style="margin-top:5px">' + specs + '</div>' : '') +
-        (n.note_mk ? '<div style="margin-top:5px;font-size:9px;background:#fffbeb;border-left:2px solid #f59e0b;padding:3px 7px;color:#92400e">' + esc(n.note_mk) + '</div>' : '') +
-        (n.criteres_selection ? '<div style="margin-top:4px;font-size:9px;color:#676867;font-style:italic">' + esc(n.criteres_selection) + '</div>' : '') +
+    // ── AMO/Programmiste（Partner DBとの照合結果も将来的に追加）──
+    const amoInfo = n.amo_client || (n.specialites_requises||[]).find(s => s.toLowerCase().includes("amo")||s.toLowerCase().includes("program")) || null;
+
+    return '<tr style="border-bottom:1px solid #eee">' +
+      // Source
+      '<td style="vertical-align:top;padding:12px 10px">' +
+        '<span class="mk-tag" style="font-size:7px;display:block;margin-bottom:3px">' + esc(n.source) + '</span>' +
+        (isComp ? '<span class="mk-tag mk-tag-blue" style="font-size:7px;display:block;margin-bottom:3px">Concours</span>' : '') +
+        (n.type_concours ? '<span style="font-size:8px;color:#676867;display:block">' + esc(n.type_concours) + '</span>' : '') +
+        (n.enriched ? '<span style="font-size:7px;color:#22c55e;display:block;margin-top:2px">● Analysé</span>' : '') +
       '</td>' +
-      '<td style="font-size:12px;font-weight:700;vertical-align:top">' + esc(n.budget||"—") + '</td>' +
-      '<td style="font-size:11px;vertical-align:top">' + deadline + '</td>' +
-      '<td style="vertical-align:top"><a href="' + esc(n.url) + '" target="_blank" style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#0016B4;text-decoration:none">Voir →</a></td>' +
-      '</tr>';
+      // Titre & Infos
+      '<td style="vertical-align:top;padding:12px 10px;max-width:380px">' +
+        '<div style="font-size:13px;font-weight:700;color:#1a1a1a;line-height:1.3;margin-bottom:4px">' + esc(n.title) + '</div>' +
+        // 詳細情報バー
+        (details ? '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px">' + details + '</div>' : '') +
+        // 必要専門家
+        (specs ? '<div style="margin-bottom:5px"><span style="font-size:8px;color:#676867;text-transform:uppercase;letter-spacing:0.1em;margin-right:4px">Équipe :</span>' + specs + '</div>' : '') +
+        // AMO/Programmiste
+        (amoInfo ? '<div style="font-size:9px;background:#fef3c7;border-left:2px solid #f59e0b;padding:3px 8px;margin-bottom:4px;color:#92400e"><strong>AMO/Prog. :</strong> ' + esc(amoInfo) + '</div>' : '') +
+        // MKメモ
+        (n.note_mk ? '<div style="font-size:9px;background:#f0f4ff;border-left:2px solid #0016B4;padding:3px 8px;color:#0016B4;font-style:italic">' + esc(n.note_mk) + '</div>' : '') +
+      '</td>' +
+      // Maître d'ouvrage
+      '<td style="vertical-align:top;padding:12px 10px;min-width:140px">' +
+        '<div style="font-size:11px;color:#1a1a1a;font-weight:500">' + esc(n.acheteur||"—") + '</div>' +
+        (n.country ? '<div style="font-size:10px;color:#676867;margin-top:2px">' + esc(n.country) + '</div>' : '') +
+      '</td>' +
+      // Dates
+      '<td style="vertical-align:top;padding:12px 10px;min-width:130px">' + datesHtml + '</td>' +
+      // Budget
+      '<td style="vertical-align:top;padding:12px 10px;font-size:12px;font-weight:700;white-space:nowrap">' +
+        (n.budget ? esc(n.budget) : '—') +
+        (n.prime ? '<div style="font-size:9px;color:#676867;font-weight:400;margin-top:2px">Prime : ' + n.prime.toLocaleString("fr-FR") + ' €</div>' : '') +
+      '</td>' +
+      // Lien
+      '<td style="vertical-align:top;padding:12px 10px;text-align:right">' +
+        '<a href="' + esc(n.url) + '" target="_blank" style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#0016B4;text-decoration:none">Voir →</a>' +
+      '</td>' +
+    '</tr>';
   }).join("");
 }
 
