@@ -327,9 +327,28 @@ async function fetchBOAMP() {
     `https://api.boamp.fr/api/explore/v2.1/catalog/datasets/boamp/records?limit=80&offset=0`,
   ];
 
-  const KW = ["musée","théâtre","bibliothèque","école","hôtel","gare","bureau","campus",
-              "auditorium","conservatoire","médiathèque","culturel","université","sport",
-              "mairie","maison","centre","équipement"];
+  const KW = [
+    // 文化・展示
+    "musée","muséo","galerie","exposit","patrimoine","monument","historique",
+    "réhabilitation","rénovation","restauration","restructuration","réaménagement",
+    "théâtre","opéra","philharmonie","concert","salle de spectacle","auditorium",
+    "cinéma","médiathèque","bibliothèque","archives","conservatoire",
+    "culturel","culture","artistique","art","œuvre",
+    // 教育
+    "école","collège","lycée","université","campus","internat","EPLE",
+    "enseignement","formation","recherche",
+    // ホスピタリティ・観光
+    "hôtel","hébergement","resort","tourisme","accueil",
+    // 公共施設
+    "mairie","hôtel de ville","préfecture","tribunal","justice","palais",
+    "centre","équipement","bâtiment public","ouvrage public",
+    "sport","piscine","gymnase","stade",
+    // インフラ
+    "gare","aéroport","transport","mobilité",
+    // 建築一般
+    "maîtrise d'œuvre","conception","construction","architecture",
+    "bureau","logement","résidence",
+  ];
 
   for (const url of endpoints) {
     try {
@@ -361,10 +380,10 @@ async function fetchBOAMP() {
       const results = rows.map(r => {
         const f = r.record?.fields || r.fields || r;
         if (!f.objet || f.objet.trim().length < 3) return null;
-        const text = (f.objet||"").toLowerCase();
+        const text = [(f.objet||""),(f.description||""),(f.descripteur_libelle||""),(f.nature||""),(f.typemarche||"")].join(" ").toLowerCase();
         const cpv = String(f.code_cpv||f.cpv||"");
         const isRelevant = KW.some(k=>text.includes(k)) ||
-          ["7120","7122","4521","9200"].some(c=>cpv.startsWith(c));
+          ["7120","7122","7121","7123","7124","4521","4522","9200","9201","9202","9203"].some(c=>cpv.startsWith(c));
         if (!isRelevant) return null;
         return {
           _id:`boamp-${f.id||f.idweb||Math.random()}`, _source:"BOAMP",
