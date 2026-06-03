@@ -733,6 +733,50 @@ async function fetchJapan() {
 
 // ─── 中東（RCU AlUla・NEOM・Gulf TED POST） ───────────────────────────────────
 
+async function fetchMIQCP() {
+  console.log("📡 MIQCP (France — Concours architecture)...");
+  const urls = [
+    "https://www.miqcp.gouv.fr/index.php?option=com_content&view=category&id=17&format=feed&type=rss",
+    "https://www.miqcp.gouv.fr/index.php/concours/appels-a-candidatures?format=feed&type=rss",
+    "https://www.miqcp.gouv.fr/feed/",
+  ];
+  const allItems = [];
+  for (const url of urls) {
+    const res = await safeFetch(url, {}, "MIQCP");
+    if (!res) continue;
+    const xml = await res.text();
+    const items = parseRSS(xml, "MIQCP", (get) => {
+      const title = get("title");
+      if (!title || title.length < 3) return null;
+      return {
+        _id: `miqcp-${Math.random()}`,
+        _source: "MIQCP",
+        title: cleanText(title),
+        description: cleanText(get("description").replace(/<[^>]*>/g, "").slice(0, 400)),
+        acheteur: get("dc:creator") || "MIQCP",
+        budget: null,
+        date_pub: get("pubDate"),
+        deadline: null,
+        country: "France",
+        region: "France",
+        cpv: "71221000",
+        procedure: "Competition",
+        nature: "Competition",
+        url: get("link") || "https://www.miqcp.gouv.fr",
+      };
+    });
+    if (items.length > 0) {
+      allItems.push(...items);
+      console.log(`  ✅ MIQCP: ${items.length}件`);
+      break;
+    }
+  }
+  if (!allItems.length) {
+    console.log("  ⚠️ MIQCP: 0件（RSSが取得できませんでした）");
+  }
+  return allItems;
+}
+
 async function fetchMiddleEast() {
   console.log("📡 Middle East...");
   const allResults = [];
@@ -783,6 +827,90 @@ async function fetchMuseumInsider() {
 }
 
 // ─── AIサマリー ────────────────────────────────────────────────────────────────
+
+
+// ─── 案件詳細の自動解析 ───────────────────────────────────────────────────────
+// 各コンペの詳細ページを取得し、Claudeで構造化データを抽出する
+
+async function callClaude(prompt, maxTokens=800) {
+  if (!CONFIG.anthropicKey) return null;
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":CONFIG.anthropicKey,"anthropic-version":"2023-06-01"},
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:maxTokens,messages:[{role:"user",content:prompt}]}),
+      timeout:20000,
+    });
+    if (!res.ok) return null;
+    const rawText = await res.text();
+    const data = JSON.parse(rawText);
+    return data.content.map(c=>c.text||"").join("").trim();
+  } catch(e) { return null; }
+}
+
+async function enrichNoticeDetails(notice) {
+  // 既に解析済みならスキップ
+  if (notice._enriched) return notice;
+
+  // 詳細ページを取得
+  let detailHtml = "";
+  try {
+    const res = await safeFetch(notice.url, {
+      headers:{"User-Agent":"Mozilla/5.0 (compatible; MKMonitor/1.0)","Accept":"text/html,application/xhtml+xml"},
+    }, `enrich:${notice._source}`);
+    if (res) {
+      detailHtml = await res.text();
+      // HTMLタグを除去してテキストのみ（最大3000文字）
+      detailHtml = detailHtml
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi,"")
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"")
+        .replace(/<[^>]+>/g," ")
+        .replace(/\s+/g," ")
+        .slice(0,3000);
+    }
+  } catch(e) {}
+
+  if (!detailHtml || detailHtml.length < 100) return notice;
+
+  const prompt = `Tu es un expert en marchés publics d'architecture. Analyse ce texte d'un avis de concours et extrais les informations structurées.
+
+Source: ${notice._source}
+Titre: ${notice.title}
+Texte: ${detailHtml}
+
+Réponds UNIQUEMENT avec un JSON valide (pas de markdown, pas d'explication):
+{
+  "specialites_requises": ["liste des spécialités/compétences requises dans l'équipe, ex: Architecte du patrimoine, OPC, Acousticien, Paysagiste, BET Structure..."],
+  "prime": null_ou_nombre_en_euros,
+  "surface": null_ou_nombre_en_m2,
+  "mission": "Base|Complète|Partielle|null",
+  "type_concours": "International|Restreint|Ouvert|null",
+  "nb_candidats_max": null_ou_nombre,
+  "criteres_selection": "résumé des critères de sélection en 1 phrase",
+  "planning_cle": "dates importantes en 1 phrase",
+  "note_mk": "pertinence pour Moreau Kusunoki en 1 phrase (musée, culture, international, réhabilitation de patrimoine)"
+}`;
+
+  const result = await callClaude(prompt, 800);
+  if (!result) return notice;
+
+  try {
+    const extracted = JSON.parse(result.replace(/```json|```/g,"").trim());
+    return {
+      ...notice,
+      _enriched: true,
+      specialites_requises: extracted.specialites_requises || [],
+      prime: extracted.prime || notice.prime || null,
+      surface: extracted.surface || notice.surface || null,
+      mission: extracted.mission || null,
+      type_concours: extracted.type_concours || null,
+      nb_candidats_max: extracted.nb_candidats_max || null,
+      criteres_selection: extracted.criteres_selection || null,
+      planning_cle: extracted.planning_cle || null,
+      note_mk: extracted.note_mk || null,
+    };
+  } catch(e) { return notice; }
+}
 
 async function generateSummary(notice) {
   if (!CONFIG.anthropicKey) return null;
@@ -857,10 +985,11 @@ Return this exact structure (translate values to each language, use "不明"/"N/
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":CONFIG.anthropicKey,"anthropic-version":"2023-06-01"},
-      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,messages:[{role:"user",content:prompt}]}),
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:1500,messages:[{role:"user",content:prompt}]}),
     });
     if (!res.ok) return null;
-    const data = JSON.parse(res._text||"{}");
+    const rawText = await res.text();
+    const data = JSON.parse(rawText);
     const text = data.content.map(c=>c.text||"").join("").trim();
     return JSON.parse(text.replace(/```json|```/g,"").trim());
   } catch(e) { return null; }
@@ -1104,6 +1233,20 @@ async function runMonitor() {
     if (count>0) console.log(`   ${BUILDING_TYPES[t].label.en}: ${count}件`);
   });
 
+  // 案件詳細の自動解析（コンペ優先、上位15件まで）
+  console.log("🔍 案件詳細解析中...");
+  const toEnrich = deduped
+    .filter(n => n.procedure === "Competition" || n.nature === "Competition" || n._score >= 30)
+    .slice(0, 15);
+  for (const n of toEnrich) {
+    const enriched = await enrichNoticeDetails(n);
+    Object.assign(n, enriched);
+    if (enriched._enriched) process.stdout.write("✓");
+  }
+  const enrichedCount = toEnrich.filter(n => n._enriched).length;
+  console.log(`\n✅ 詳細解析完了: ${enrichedCount}/${toEnrich.length}件`);
+
+  // AIサマリー生成
   console.log("🤖 AIサマリー生成中...");
   for (const n of priorityNotices.slice(0,10)) {
     n._summary = await generateSummary(n);
@@ -1161,6 +1304,17 @@ async function runMonitor() {
         geo: n._geo,
         buildingType: detectBuildingType(n),
         summary: n._summary || null,
+        // 詳細解析データ
+        enriched: n._enriched || false,
+        specialites_requises: n.specialites_requises || [],
+        prime: n.prime || null,
+        surface: n.surface || null,
+        mission: n.mission || null,
+        type_concours: n.type_concours || null,
+        nb_candidats_max: n.nb_candidats_max || null,
+        criteres_selection: n.criteres_selection || null,
+        planning_cle: n.planning_cle || null,
+        note_mk: n.note_mk || null,
       }))
     };
     fs.writeFileSync(NOTICES_FILE, JSON.stringify(saveData, null, 2));
@@ -1598,13 +1752,11 @@ ${MK_CSS}
     <table class="mk-table">
       <thead>
         <tr>
-          <th>Source</th>
-          <th>Titre</th>
-          <th>Maître d'ouvrage</th>
-          <th>Pays</th>
+          <th style="width:80px">Source</th>
+          <th>Titre / Détails / Équipe requise</th>
           <th>Budget</th>
           <th>Échéance</th>
-          <th></th>
+          <th style="width:60px"></th>
         </tr>
       </thead>
       <tbody id="opp-tbody">
@@ -1735,14 +1887,30 @@ function filterNotices() {
     }
 
     const isComp = n.procedure === "Competition" || n.nature === "Competition";
+    // 詳細情報パネル
+    const specs = (n.specialites_requises||[]).map(s =>
+      '<span style="font-size:8px;background:#f0f4ff;color:#0016B4;padding:1px 6px;margin-right:3px;margin-bottom:2px;display:inline-block">' + esc(s) + '</span>'
+    ).join("");
+    const details = [
+      n.surface ? '<span style="font-size:9px;color:#676867">Surface : <strong style="color:#1a1a1a">' + n.surface.toLocaleString("fr-FR") + ' m²</strong></span>' : null,
+      n.prime ? '<span style="font-size:9px;color:#676867">Prime : <strong style="color:#1a1a1a">' + n.prime.toLocaleString("fr-FR") + ' €</strong></span>' : null,
+      n.mission ? '<span style="font-size:9px;color:#676867">Mission : <strong style="color:#1a1a1a">' + esc(n.mission) + '</strong></span>' : null,
+      n.type_concours ? '<span style="font-size:9px;color:#676867">Type : <strong style="color:#1a1a1a">' + esc(n.type_concours) + '</strong></span>' : null,
+      n.nb_candidats_max ? '<span style="font-size:9px;color:#676867">Candidats max : <strong style="color:#1a1a1a">' + n.nb_candidats_max + '</strong></span>' : null,
+    ].filter(Boolean).join('<span style="color:#c4c3c1;margin:0 6px">|</span>');
+
     return '<tr>' +
-      '<td><span class="mk-tag" style="font-size:7px">' + esc(n.source) + '</span>' + (isComp ? '<br><span class="mk-tag mk-tag-blue" style="font-size:7px;margin-top:3px">Concours</span>' : '') + '</td>' +
-      '<td style="font-size:12px;font-weight:700;color:#1a1a1a;max-width:340px">' + esc(n.title) + '<div style="font-size:10px;font-weight:400;color:#676867;margin-top:2px">' + esc(n.acheteur||"") + '</div></td>' +
-      '<td style="font-size:11px;color:#676867">' + esc(n.acheteur||"") + '</td>' +
-      '<td style="font-size:11px">' + esc(n.country||"") + '</td>' +
-      '<td style="font-size:12px;font-weight:700">' + esc(n.budget||"—") + '</td>' +
-      '<td style="font-size:11px">' + deadline + '</td>' +
-      '<td><a href="' + esc(n.url) + '" target="_blank" style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#0016B4;text-decoration:none">Voir →</a></td>' +
+      '<td style="vertical-align:top"><span class="mk-tag" style="font-size:7px">' + esc(n.source) + '</span>' + (isComp ? '<br><span class="mk-tag mk-tag-blue" style="font-size:7px;margin-top:3px">Concours</span>' : '') + (n.enriched ? '<br><span style="font-size:7px;color:#22c55e;margin-top:2px;display:block">● Analysé</span>' : '') + '</td>' +
+      '<td style="max-width:360px"><div style="font-size:12px;font-weight:700;color:#1a1a1a;line-height:1.3">' + esc(n.title) + '</div>' +
+        '<div style="font-size:10px;color:#676867;margin-top:2px">' + esc(n.acheteur||"") + (n.country ? ' · ' + esc(n.country) : '') + '</div>' +
+        (details ? '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">' + details + '</div>' : '') +
+        (specs ? '<div style="margin-top:5px">' + specs + '</div>' : '') +
+        (n.note_mk ? '<div style="margin-top:5px;font-size:9px;background:#fffbeb;border-left:2px solid #f59e0b;padding:3px 7px;color:#92400e">' + esc(n.note_mk) + '</div>' : '') +
+        (n.criteres_selection ? '<div style="margin-top:4px;font-size:9px;color:#676867;font-style:italic">' + esc(n.criteres_selection) + '</div>' : '') +
+      '</td>' +
+      '<td style="font-size:12px;font-weight:700;vertical-align:top">' + esc(n.budget||"—") + '</td>' +
+      '<td style="font-size:11px;vertical-align:top">' + deadline + '</td>' +
+      '<td style="vertical-align:top"><a href="' + esc(n.url) + '" target="_blank" style="font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#0016B4;text-decoration:none">Voir →</a></td>' +
       '</tr>';
   }).join("");
 }
